@@ -1,0 +1,17 @@
+# Copy this file to .dev.vars for local Wrangler development.
+# This placeholder is intentionally non-secret. Use Cloudflare's managed secret
+# storage for staging and production values.
+TURNSTILE_SECRET_KEY=1x0000000000000000000000000000000AA
+TURNSTILE_SITE_KEY=1x00000000000000000000AA
+
+# Abuse-control identifiers require a separate, unique 32-byte HMAC key encoded
+# as canonical unpadded base64url. Keep the previous key for at least 24 hours
+# during rotation so exact rolling IP quotas overlap without storing raw IPs.
+# ABUSE_IP_HMAC_KEY=<32 random bytes as unpadded base64url>
+# ABUSE_IP_HMAC_PREVIOUS_KEY=<previous key during a 24-hour overlap>
+
+# Secret creation also requires SECRET_PREPARATION_HMAC_KEY. Generate a unique
+# canonical unpadded base64url value from exactly 32 random bytes and store it
+# only in the ignored .dev.vars file. No signing-key placeholder is committed.
+# SECRET_PREPARATION_HMAC_PREVIOUS_KEY is optional and verification-only during
+# a bounded rotation grace period; never reuse a checked-in placeholder for it.

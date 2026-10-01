@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "node": {
+    "major": 24,
+    "minimum": "24.11.0"
+  },
+  "pnpm": "11.13.0",
+  "wrangler": {
+    "source": "workspace-lockfile",
+    "minimumMajor": 4
+  },
+  "local": {
+    "persistenceDirectory": ".wrangler/state",
+    "functional": {
+      "hostname": "127.0.0.1",
+      "port": 8789,
+      "inspectorPort": 9239
+    },
+    "marketing": {
+      "hostname": "127.0.0.2",
+      "port": 8790,
+      "inspectorPort": 9240
+    }
+  },
+  "forwardedPorts": [8789, 8790],
+  "forwardedProtocol": "https"
+}

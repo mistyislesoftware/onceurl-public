@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "requiredVariables": ["DEPLOYMENT_ENVIRONMENT", "MARKETING_ORIGIN", "FUNCTIONAL_ORIGIN"],
+  "environments": {
+    "local": {
+      "source": "repository",
+      "configured": true,
+      "marketingOrigin": "http://127.0.0.2:8790",
+      "functionalOrigin": "http://127.0.0.1:8789"
+    },
+    "preview": {
+      "source": "deployment-environment",
+      "configured": false
+    },
+    "staging": {
+      "source": "deployment-environment",
+      "configured": false
+    },
+    "production": {
+      "source": "deployment-environment",
+      "configured": false
+    }
+  }
+}

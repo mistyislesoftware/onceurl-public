@@ -1,0 +1,31 @@
+{
+  "$schema": "https://raw.githubusercontent.com/cloudflare/workers-sdk/main/packages/wrangler/config-schema.json",
+  "name": "onceurl-preview-marketing",
+  "main": "../preview-artifact/marketing-worker/index.mjs",
+  "compatibility_date": "2026-07-15",
+  "compatibility_flags": [],
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": {
+    "enabled": false,
+    "logs": {
+      "enabled": false,
+      "invocation_logs": false
+    },
+    "traces": {
+      "enabled": false
+    }
+  },
+  "vars": {
+    "DEPLOYMENT_ENVIRONMENT": "preview",
+    "MARKETING_ORIGIN": "https://marketing.preview.invalid",
+    "FUNCTIONAL_ORIGIN": "https://functional.preview.invalid"
+  },
+  "assets": {
+    "directory": "../preview-artifact/marketing-assets",
+    "binding": "ASSETS",
+    "html_handling": "none",
+    "not_found_handling": "none",
+    "run_worker_first": true
+  }
+}

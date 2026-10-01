@@ -1,0 +1,205 @@
+{
+  "$schema": "https://raw.githubusercontent.com/cloudflare/workers-sdk/main/packages/wrangler/config-schema.json",
+  "name": "onceurl-worker",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-12",
+  "compatibility_flags": [],
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "invocation_logs": false
+    },
+    "traces": {
+      "enabled": false
+    }
+  },
+  "vars": {
+    "DEPLOYMENT_ENVIRONMENT": "local",
+    "MARKETING_ORIGIN": "http://127.0.0.2:8790",
+    "FUNCTIONAL_ORIGIN": "http://127.0.0.1:8789"
+  },
+  "assets": {
+    "directory": "../web/dist",
+    "binding": "ASSETS",
+    "run_worker_first": true
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "onceurl-local",
+      "database_id": "local-onceurl-d1",
+      "migrations_dir": "../../packages/db/drizzle/migrations",
+      "migrations_pattern": "../../packages/db/drizzle/migrations/*.sql",
+      "migrations_table": "d1_migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "FILES",
+      "bucket_name": "onceurl-local-files"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "CAPABILITY_STATE",
+        "class_name": "CapabilityDurableObject"
+      },
+      {
+        "name": "ABUSE_CONTROL",
+        "class_name": "AbuseControlDurableObject"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1_capability_durable_object",
+      "new_sqlite_classes": ["CapabilityDurableObject"]
+    },
+    {
+      "tag": "v2_abuse_control_durable_object",
+      "new_sqlite_classes": ["AbuseControlDurableObject"]
+    }
+  ],
+  "ratelimits": [
+    {
+      "name": "PREPARATION_FLOOD_LIMITER",
+      "namespace_id": "1001",
+      "simple": {
+        "limit": 30,
+        "period": 60
+      }
+    }
+  ],
+  "queues": {
+    "producers": [
+      {
+        "binding": "ASYNC_JOBS",
+        "queue": "onceurl-local-async-jobs"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "onceurl-local-async-jobs",
+        "max_batch_size": 10,
+        "max_batch_timeout": 5,
+        "max_retries": 8,
+        "retry_delay": 60,
+        "dead_letter_queue": "onceurl-local-async-jobs-dead-letter",
+        "max_concurrency": 5
+      },
+      {
+        "queue": "onceurl-local-async-jobs-dead-letter",
+        "max_batch_size": 10,
+        "max_batch_timeout": 5,
+        "max_retries": 3,
+        "retry_delay": 60,
+        "max_concurrency": 2
+      }
+    ]
+  },
+  "triggers": {
+    "crons": ["*/5 * * * *"]
+  },
+  "env": {
+    "preview": {
+      "vars": {
+        "DEPLOYMENT_ENVIRONMENT": "preview",
+        "MARKETING_ORIGIN": "https://marketing.preview.invalid",
+        "FUNCTIONAL_ORIGIN": "https://functional.preview.invalid"
+      },
+      "d1_databases": [],
+      "r2_buckets": [],
+      "durable_objects": {
+        "bindings": []
+      },
+      "migrations": [],
+      "queues": {
+        "producers": [],
+        "consumers": []
+      },
+      "triggers": {
+        "crons": []
+      }
+    },
+    "staging": {
+      "name": "onceurl-worker-staging",
+      "vars": {
+        "DEPLOYMENT_ENVIRONMENT": "staging",
+        "MARKETING_ORIGIN": "https://marketing.staging.invalid",
+        "FUNCTIONAL_ORIGIN": "https://functional.staging.invalid"
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "onceurl-staging",
+          "database_id": "00000000-0000-0000-0000-000000000000",
+          "migrations_dir": "../../packages/db/drizzle/migrations",
+          "migrations_pattern": "../../packages/db/drizzle/migrations/*.sql",
+          "migrations_table": "d1_migrations"
+        }
+      ],
+      "r2_buckets": [
+        {
+          "binding": "FILES",
+          "bucket_name": "onceurl-staging-files-unconfigured"
+        }
+      ],
+      "durable_objects": {
+        "bindings": [
+          {
+            "name": "CAPABILITY_STATE",
+            "class_name": "CapabilityDurableObject"
+          },
+          {
+            "name": "ABUSE_CONTROL",
+            "class_name": "AbuseControlDurableObject"
+          }
+        ]
+      },
+      "ratelimits": [
+        {
+          "name": "PREPARATION_FLOOD_LIMITER",
+          "namespace_id": "1002",
+          "simple": {
+            "limit": 30,
+            "period": 60
+          }
+        }
+      ],
+      "queues": {
+        "producers": [
+          {
+            "binding": "ASYNC_JOBS",
+            "queue": "onceurl-staging-async-jobs"
+          }
+        ],
+        "consumers": [
+          {
+            "queue": "onceurl-staging-async-jobs",
+            "max_batch_size": 10,
+            "max_batch_timeout": 5,
+            "max_retries": 8,
+            "retry_delay": 60,
+            "dead_letter_queue": "onceurl-staging-async-jobs-dead-letter",
+            "max_concurrency": 5
+          },
+          {
+            "queue": "onceurl-staging-async-jobs-dead-letter",
+            "max_batch_size": 10,
+            "max_batch_timeout": 5,
+            "max_retries": 3,
+            "retry_delay": 60,
+            "max_concurrency": 2
+          }
+        ]
+      },
+      "triggers": {
+        "crons": ["*/5 * * * *"]
+      }
+    }
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1783946347700,
+      "tag": "0000_initial_capability_catalogue",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1785590908193,
+      "tag": "0001_add_routing_locator_projection",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1788001006989,
+      "tag": "0002_add_capability_projection_reconciliation",
+      "breakpoints": true
+    }
+  ]
+}

@@ -1,0 +1,49 @@
+{
+  "$schema": "https://raw.githubusercontent.com/cloudflare/workers-sdk/main/packages/wrangler/config-schema.json",
+  "name": "onceurl-marketing",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-15",
+  "compatibility_flags": [],
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": {
+    "enabled": false,
+    "logs": {
+      "enabled": false,
+      "invocation_logs": false
+    },
+    "traces": {
+      "enabled": false
+    }
+  },
+  "vars": {
+    "DEPLOYMENT_ENVIRONMENT": "local",
+    "MARKETING_ORIGIN": "http://127.0.0.2:8790",
+    "FUNCTIONAL_ORIGIN": "http://127.0.0.1:8789"
+  },
+  "assets": {
+    "directory": "dist",
+    "binding": "ASSETS",
+    "html_handling": "none",
+    "not_found_handling": "none",
+    "run_worker_first": true
+  },
+  "env": {
+    "preview": {
+      "name": "onceurl-marketing-preview",
+      "vars": {
+        "DEPLOYMENT_ENVIRONMENT": "preview",
+        "MARKETING_ORIGIN": "https://marketing.preview.invalid",
+        "FUNCTIONAL_ORIGIN": "https://functional.preview.invalid"
+      }
+    },
+    "staging": {
+      "name": "onceurl-marketing-staging",
+      "vars": {
+        "DEPLOYMENT_ENVIRONMENT": "staging",
+        "MARKETING_ORIGIN": "https://marketing.staging.invalid",
+        "FUNCTIONAL_ORIGIN": "https://functional.staging.invalid"
+      }
+    }
+  }
+}

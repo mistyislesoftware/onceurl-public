@@ -1,0 +1,22 @@
+{
+  "name": "@onceurl/worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -b",
+    "dev": "wrangler dev --config wrangler.jsonc --local --ip 127.0.0.1 --port 8789 --inspector-port 9239 --persist-to ../../.wrangler/state",
+    "deploy": "wrangler deploy --config wrangler.jsonc",
+    "lint": "eslint .",
+    "test": "vitest run --root ../.. apps/worker/src/app.test.ts",
+    "typecheck": "tsc -b --pretty false",
+    "test:integration": "vitest run src/platform.integration.test.ts"
+  },
+  "dependencies": {
+    "@onceurl/domain": "workspace:*",
+    "@onceurl/shared": "workspace:*",
+    "hono": "^4.13.4",
+    "zod": "^4.4.3"
+  },
+  "license": "UNLICENSED"
+}

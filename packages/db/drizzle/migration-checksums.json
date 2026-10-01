@@ -1,0 +1,8 @@
+{
+  "algorithm": "sha256",
+  "files": {
+    "0000_initial_capability_catalogue.sql": "7b724f0f2bb95ee62cb6b0938ad0931571c30ccf8765b75ebd209c43a8da1729",
+    "0001_add_routing_locator_projection.sql": "a303e038982114f777d59072c61bf0d29ca5d3b65f80cd9e2afcc00344394dee",
+    "0002_add_capability_projection_reconciliation.sql": "65df075066d643cedf98c5e3d648bbe6d6688c4a9e822a74299d49d918bf7aa4"
+  }
+}

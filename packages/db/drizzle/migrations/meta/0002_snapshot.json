@@ -1,0 +1,527 @@
+{
+  "version": "6",
+  "dialect": "sqlite",
+  "id": "a0414ac1-958b-4b45-ad43-e94141b598d2",
+  "prevId": "f666f656-8350-496e-8ed2-357f93c6a034",
+  "tables": {
+    "capabilities": {
+      "name": "capabilities",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "workspace_id": {
+          "name": "workspace_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_by_user_id": {
+          "name": "created_by_user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "state": {
+          "name": "state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "routing_locator": {
+          "name": "routing_locator",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "public_alias": {
+          "name": "public_alias",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "policy_json": {
+          "name": "policy_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "consumed_at": {
+          "name": "consumed_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "disabled_at": {
+          "name": "disabled_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "deleted_at": {
+          "name": "deleted_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 1
+        }
+      },
+      "indexes": {
+        "capabilities_routing_locator_unique": {
+          "name": "capabilities_routing_locator_unique",
+          "columns": ["routing_locator"],
+          "isUnique": true
+        },
+        "capabilities_state_expires_at_idx": {
+          "name": "capabilities_state_expires_at_idx",
+          "columns": ["state", "expires_at"],
+          "isUnique": false
+        },
+        "capabilities_workspace_id_created_at_idx": {
+          "name": "capabilities_workspace_id_created_at_idx",
+          "columns": ["workspace_id", "created_at"],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "capabilities_routing_locator_format": {
+          "name": "capabilities_routing_locator_format",
+          "value": "length(\"capabilities\".\"routing_locator\") = 53 and substr(\"capabilities\".\"routing_locator\", 1, 5) = 'loc1_' and substr(\"capabilities\".\"routing_locator\", 6) not glob '*[^0-9a-f]*'"
+        },
+        "capabilities_policy_json_object": {
+          "name": "capabilities_policy_json_object",
+          "value": "json_valid(\"capabilities\".\"policy_json\") = 1 and case when json_valid(\"capabilities\".\"policy_json\") = 1 then json_type(\"capabilities\".\"policy_json\") = 'object' else 0 end"
+        },
+        "capabilities_version_positive_integer": {
+          "name": "capabilities_version_positive_integer",
+          "value": "typeof(\"capabilities\".\"version\") = 'integer' and \"capabilities\".\"version\" > 0"
+        }
+      }
+    },
+    "capability_counters": {
+      "name": "capability_counters",
+      "columns": {
+        "capability_id": {
+          "name": "capability_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "view_count": {
+          "name": "view_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "consumption_count": {
+          "name": "consumption_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "download_count": {
+          "name": "download_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "upload_count": {
+          "name": "upload_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "click_count": {
+          "name": "click_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "capability_counters_capability_id_capabilities_id_fk": {
+          "name": "capability_counters_capability_id_capabilities_id_fk",
+          "tableFrom": "capability_counters",
+          "tableTo": "capabilities",
+          "columnsFrom": ["capability_id"],
+          "columnsTo": ["id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "capability_counters_view_count_non_negative": {
+          "name": "capability_counters_view_count_non_negative",
+          "value": "typeof(\"capability_counters\".\"view_count\") = 'integer' and \"capability_counters\".\"view_count\" >= 0"
+        },
+        "capability_counters_consumption_count_non_negative": {
+          "name": "capability_counters_consumption_count_non_negative",
+          "value": "typeof(\"capability_counters\".\"consumption_count\") = 'integer' and \"capability_counters\".\"consumption_count\" >= 0"
+        },
+        "capability_counters_download_count_non_negative": {
+          "name": "capability_counters_download_count_non_negative",
+          "value": "typeof(\"capability_counters\".\"download_count\") = 'integer' and \"capability_counters\".\"download_count\" >= 0"
+        },
+        "capability_counters_upload_count_non_negative": {
+          "name": "capability_counters_upload_count_non_negative",
+          "value": "typeof(\"capability_counters\".\"upload_count\") = 'integer' and \"capability_counters\".\"upload_count\" >= 0"
+        },
+        "capability_counters_click_count_non_negative": {
+          "name": "capability_counters_click_count_non_negative",
+          "value": "typeof(\"capability_counters\".\"click_count\") = 'integer' and \"capability_counters\".\"click_count\" >= 0"
+        }
+      }
+    },
+    "capability_projection_events": {
+      "name": "capability_projection_events",
+      "columns": {
+        "capability_id": {
+          "name": "capability_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "event_id": {
+          "name": "event_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "event_type": {
+          "name": "event_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "projection_version": {
+          "name": "projection_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "occurred_at": {
+          "name": "occurred_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "processed_at": {
+          "name": "processed_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "retain_until": {
+          "name": "retain_until",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "capability_projection_events_retention_idx": {
+          "name": "capability_projection_events_retention_idx",
+          "columns": ["retain_until"],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "capability_projection_events_capability_id_event_id_pk": {
+          "columns": ["capability_id", "event_id"],
+          "name": "capability_projection_events_capability_id_event_id_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "capability_projection_events_version_positive": {
+          "name": "capability_projection_events_version_positive",
+          "value": "typeof(\"capability_projection_events\".\"projection_version\") = 'integer' and \"capability_projection_events\".\"projection_version\" > 0"
+        },
+        "capability_projection_events_retention_order": {
+          "name": "capability_projection_events_retention_order",
+          "value": "\"capability_projection_events\".\"retain_until\" >= \"capability_projection_events\".\"occurred_at\""
+        }
+      }
+    },
+    "capability_reconciliation_candidates": {
+      "name": "capability_reconciliation_candidates",
+      "columns": {
+        "capability_id": {
+          "name": "capability_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "routing_locator": {
+          "name": "routing_locator",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "next_attempt_at": {
+          "name": "next_attempt_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "attempt_count": {
+          "name": "attempt_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "last_attempt_at": {
+          "name": "last_attempt_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "retain_until": {
+          "name": "retain_until",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "capability_reconciliation_candidates_locator_unique": {
+          "name": "capability_reconciliation_candidates_locator_unique",
+          "columns": ["routing_locator"],
+          "isUnique": true
+        },
+        "capability_reconciliation_candidates_due_idx": {
+          "name": "capability_reconciliation_candidates_due_idx",
+          "columns": ["next_attempt_at", "capability_id"],
+          "isUnique": false
+        },
+        "capability_reconciliation_candidates_retention_idx": {
+          "name": "capability_reconciliation_candidates_retention_idx",
+          "columns": ["retain_until"],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "capability_reconciliation_candidates_attempts_non_negative": {
+          "name": "capability_reconciliation_candidates_attempts_non_negative",
+          "value": "typeof(\"capability_reconciliation_candidates\".\"attempt_count\") = 'integer' and \"capability_reconciliation_candidates\".\"attempt_count\" >= 0"
+        }
+      }
+    },
+    "capability_terminal_tombstones": {
+      "name": "capability_terminal_tombstones",
+      "columns": {
+        "capability_id": {
+          "name": "capability_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "routing_locator": {
+          "name": "routing_locator",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "terminal_state": {
+          "name": "terminal_state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "projection_version": {
+          "name": "projection_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "terminal_event_id": {
+          "name": "terminal_event_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "terminal_at": {
+          "name": "terminal_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "catalogue_delete_at": {
+          "name": "catalogue_delete_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "retain_until": {
+          "name": "retain_until",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "last_verified_at": {
+          "name": "last_verified_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "capability_terminal_tombstones_locator_unique": {
+          "name": "capability_terminal_tombstones_locator_unique",
+          "columns": ["routing_locator"],
+          "isUnique": true
+        },
+        "capability_terminal_tombstones_catalogue_cleanup_idx": {
+          "name": "capability_terminal_tombstones_catalogue_cleanup_idx",
+          "columns": ["catalogue_delete_at"],
+          "isUnique": false
+        },
+        "capability_terminal_tombstones_retention_idx": {
+          "name": "capability_terminal_tombstones_retention_idx",
+          "columns": ["retain_until"],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "capability_terminal_tombstones_state": {
+          "name": "capability_terminal_tombstones_state",
+          "value": "\"capability_terminal_tombstones\".\"terminal_state\" in ('CONSUMED', 'EXPIRED', 'DELETED')"
+        },
+        "capability_terminal_tombstones_version_positive": {
+          "name": "capability_terminal_tombstones_version_positive",
+          "value": "typeof(\"capability_terminal_tombstones\".\"projection_version\") = 'integer' and \"capability_terminal_tombstones\".\"projection_version\" > 0"
+        },
+        "capability_terminal_tombstones_retention_order": {
+          "name": "capability_terminal_tombstones_retention_order",
+          "value": "\"capability_terminal_tombstones\".\"retain_until\" >= \"capability_terminal_tombstones\".\"terminal_at\" and \"capability_terminal_tombstones\".\"catalogue_delete_at\" <= \"capability_terminal_tombstones\".\"retain_until\""
+        }
+      }
+    }
+  },
+  "views": {},
+  "enums": {},
+  "_meta": {
+    "schemas": {},
+    "tables": {},
+    "columns": {}
+  },
+  "internal": {
+    "indexes": {}
+  }
+}

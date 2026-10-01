@@ -1,0 +1,29 @@
+{
+  "name": "OnceURL",
+  "image": "mcr.microsoft.com/devcontainers/typescript-node:5.0.1-24-bookworm@sha256:7f4046f8149ced6dbb5f79089bfac97a300627f9e08f91a47237b555e730e71c",
+  "remoteUser": "node",
+  "containerEnv": {
+    "COREPACK_ENABLE_DOWNLOAD_PROMPT": "0",
+    "TMPDIR": "/tmp",
+    "WRANGLER_LOG_PATH": "/tmp/onceurl-wrangler-logs"
+  },
+  "postCreateCommand": "./scripts/local/bootstrap.sh",
+  "forwardPorts": [8789, 8790],
+  "portsAttributes": {
+    "8789": {
+      "label": "OnceURL functional",
+      "onAutoForward": "notify",
+      "protocol": "https"
+    },
+    "8790": {
+      "label": "OnceURL marketing",
+      "onAutoForward": "notify",
+      "protocol": "https"
+    }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": ["dbaeumer.vscode-eslint", "esbenp.prettier-vscode"]
+    }
+  }
+}

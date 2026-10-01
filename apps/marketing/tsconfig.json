@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "WebWorker"],
+    "types": ["node"],
+    "rootDir": ".",
+    "tsBuildInfoFile": "../../.tmp/typescript/apps-marketing.tsbuildinfo",
+    "noEmit": true
+  },
+  "include": ["src", "vite.config.ts", "worker-configuration.d.ts"]
+}

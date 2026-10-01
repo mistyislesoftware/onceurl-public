@@ -1,0 +1,926 @@
+openapi: 3.1.0
+info:
+  title: OnceURL API
+  version: 0.0.0
+  description: Stable HTTP API skeleton for OnceURL's common-origin API.
+  license:
+    name: Proprietary
+    identifier: LicenseRef-Proprietary
+security: []
+servers:
+  - url: /api/v1
+    description: Common-origin API base path.
+paths:
+  /health:
+    get:
+      operationId: getHealth
+      summary: Check API health.
+      tags:
+        - Health
+      responses:
+        "200":
+          description: The API worker is healthy.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /challenges:
+    post:
+      operationId: createIsolatedChallenge
+      summary: Create a stateless capability-blind five-minute preparation ticket.
+      description: >-
+        This public endpoint accepts only onceurl_prepare. It signs a bounded correlation without
+        creating Durable Object state. Access-code tickets are returned only after an authorized
+        capability claim produces challenge_required.
+      tags:
+        - Challenges
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [action]
+              properties:
+                action:
+                  type: string
+                  const: onceurl_prepare
+      responses:
+        "200":
+          description: A signed, nonce-bearing preparation correlation with no capability identity.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChallengeTicketResponse"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /challenges/status:
+    post:
+      operationId: inspectIsolatedChallenge
+      summary: Poll a challenge ticket from the original document.
+      tags:
+        - Challenges
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChallengeStateRequest"
+      responses:
+        "200":
+          description: Current verification status for an unconsumed ticket.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [verified]
+                properties:
+                  verified:
+                    type: boolean
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "403":
+          $ref: "#/components/responses/VerificationFailed"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /challenges/verify:
+    post:
+      operationId: verifyIsolatedChallenge
+      summary: Validate a Turnstile token for an action-bound ticket.
+      description: >-
+        The isolated top-level challenge document calls this fixed endpoint without a capability
+        identifier, bearer, plaintext, ciphertext or fragment key. The Worker validates Siteverify
+        success, exact hostname, exact action and five-minute freshness. It does not send remoteip.
+      tags:
+        - Challenges
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [challenge_id, action, token]
+              properties:
+                challenge_id:
+                  $ref: "#/components/schemas/ChallengeId"
+                action:
+                  $ref: "#/components/schemas/ChallengeAction"
+                token:
+                  type: string
+                  minLength: 1
+                  maxLength: 2048
+      responses:
+        "200":
+          description: The ticket is verified and may be consumed once by its fixed action.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [verified]
+                properties:
+                  verified:
+                    type: boolean
+                    const: true
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "403":
+          $ref: "#/components/responses/VerificationFailed"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /secrets/prepare:
+    post:
+      operationId: prepareAnonymousSecret
+      summary: Prepare non-persisted authoritative material for browser encryption.
+      description: >-
+        Generates the capability identity, locator, independent recipient and owner bearer
+        material, canonical creation timestamp, bounded Phase 1A policy and policy hash. A
+        detached prep1 HMAC-SHA-256 proof authenticates the complete fixed-order preparation
+        descriptor through complete_by. This request does not create or persist a capability. The
+        browser uses the returned metadata as ouzk-v1 associated data and keeps its independently
+        generated AES key local. A single-use onceurl_prepare challenge ticket is mandatory, and
+        successful issuance is subject to exact keyed-IP rolling quotas. When selected, only the
+        browser-derived access-code verifier is bound into the signed descriptor.
+      tags:
+        - Secrets
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SecretPreparationRequest"
+      responses:
+        "200":
+          description: Non-persisted creation material. Preparation alone is not success.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SecretPreparationResponse"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "403":
+          $ref: "#/components/responses/VerificationFailed"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /secrets:
+    post:
+      operationId: completeAnonymousSecret
+      summary: Store a browser-encrypted anonymous secret atomically.
+      description: >-
+        Completes the prepared operation. Before bearer hashing or Durable Object access, the
+        Worker validates the detached preparation proof and its 15-minute deadline, then
+        revalidates the descriptor, policy and associated data. It creates the active Durable
+        Object record plus activation outbox event transactionally. The request contains
+        ciphertext but never plaintext or the fragment key. Exact duplicate completion with the
+        original proof and request is idempotent; a conflicting completion is rejected.
+      tags:
+        - Secrets
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SecretCompletionRequest"
+      responses:
+        "200":
+          description: >-
+            The authoritative record and activation outbox event are committed. Paths contain the
+            independent route bearers but no fragment or AES key; the browser appends the fragment
+            locally.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SecretCompletionResponse"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "409":
+          $ref: "#/components/responses/CapabilityUnavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /s/{locator}/{publicBearer}:
+    servers:
+      - url: /
+        description: Functional-origin capability route.
+    parameters:
+      - $ref: "#/components/parameters/CapabilityLocator"
+      - $ref: "#/components/parameters/PublicBearer"
+    get:
+      operationId: inspectSecretCapability
+      summary: Inspect recipient-visible secret capability state without consuming it.
+      tags:
+        - Capabilities
+      responses:
+        "200":
+          $ref: "#/components/responses/CapabilityMetadata"
+        "404":
+          $ref: "#/components/responses/CapabilityNotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+    head:
+      operationId: probeSecretCapability
+      summary: Probe recipient capability authority without consuming it.
+      tags:
+        - Capabilities
+      responses:
+        "200":
+          description: The locator and public bearer authorize this capability. No body is returned.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestId"
+        "404":
+          $ref: "#/components/responses/CapabilityNotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /s/{locator}/{publicBearer}/claim:
+    servers:
+      - url: /
+        description: Functional-origin capability route.
+    parameters:
+      - $ref: "#/components/parameters/CapabilityLocator"
+      - $ref: "#/components/parameters/PublicBearer"
+    post:
+      operationId: claimSecretCapability
+      summary: Explicitly consume and release a Phase 1A secret ciphertext envelope.
+      description: >-
+        Atomically commits consumption, clears the stored payload, records the outbox event and
+        releases the envelope at most once. A response lost after commit does not reopen the
+        capability; the browser must not automatically retry with a new operation ID. The AES key
+        remains in the URL fragment and is never included in this request. Exact per-IP and
+        per-capability reveal quotas are checked before code-failure counters. Three incorrect code
+        attempts require fresh isolated challenges; failures four through nine apply increasing
+        backoff, and failure ten durably moves the capability to ABUSE_LOCKED.
+      tags:
+        - Capabilities
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClaimRequest"
+      responses:
+        "200":
+          description: The authoritative claim committed and released the ciphertext once.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaimResponse"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "404":
+          $ref: "#/components/responses/CapabilityNotFound"
+        "403":
+          $ref: "#/components/responses/VerificationRequiredOrFailed"
+        "409":
+          $ref: "#/components/responses/CapabilityUnavailable"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /m/{locator}/{ownerBearer}:
+    servers:
+      - url: /
+        description: Functional-origin capability route.
+    parameters:
+      - $ref: "#/components/parameters/CapabilityLocator"
+      - $ref: "#/components/parameters/OwnerBearer"
+    get:
+      operationId: inspectManagedSecretCapability
+      summary: Inspect owner-visible secret capability state without consuming it.
+      tags:
+        - Capabilities
+      responses:
+        "200":
+          $ref: "#/components/responses/OwnerCapabilityMetadata"
+        "404":
+          $ref: "#/components/responses/CapabilityNotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+    head:
+      operationId: probeManagedSecretCapability
+      summary: Probe owner capability authority without consuming it.
+      tags:
+        - Capabilities
+      responses:
+        "200":
+          description: The locator and owner bearer authorize this capability. No body is returned.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestId"
+        "404":
+          $ref: "#/components/responses/CapabilityNotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+components:
+  headers:
+    RequestId:
+      description: Unique request identifier for support and log correlation.
+      schema:
+        type: string
+        format: uuid
+  responses:
+    CapabilityMetadata:
+      description: >-
+        A browser request receives the passive application document; an application/json request
+        receives minimal authorized recipient metadata. Neither representation consumes content.
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/CapabilityMetadataResponse"
+        text/html:
+          schema:
+            type: string
+            description: Passive no-store recipient application document. It never contains ciphertext or plaintext.
+    OwnerCapabilityMetadata:
+      description: >-
+        A browser request receives the passive owner document; an application/json request receives
+        authorized lifecycle, policy and coarse event metadata. Neither representation consumes content.
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/OwnerCapabilityMetadataResponse"
+        text/html:
+          schema:
+            type: string
+            description: Passive no-store owner application document with no recipient activity detail.
+    InvalidRequest:
+      description: The request body is malformed or outside the accepted bounds.
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    CapabilityNotFound:
+      description: The locator or bearer is unknown, malformed, or not authorized.
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    CapabilityUnavailable:
+      description: The capability cannot release content for this explicit claim.
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    RateLimited:
+      description: An exact rolling quota or authoritative access-code backoff rejected the request.
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestId"
+        Retry-After:
+          description: Deterministic whole seconds until the rejected request may be retried.
+          schema:
+            type: integer
+            minimum: 1
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    VerificationFailed:
+      description: The action-bound challenge ticket or provider assertion was not accepted.
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    VerificationRequiredOrFailed:
+      description: >-
+        The access code was not accepted, or the authoritative failure state requires a fresh
+        isolated onceurl_access_code challenge before another code verification. When error.code is
+        verification_required, error.details contains the challenge_id and the constant
+        expires_in_seconds value 300. That access-code ticket is not available from the public
+        challenge-mint endpoint.
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    ServiceUnavailable:
+      description: The authoritative capability service is unavailable or failed closed.
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    NotFound:
+      description: The requested API resource was not found.
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    InternalError:
+      description: An unexpected API error occurred.
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Must exactly equal the prepared operation_id and remain stable for any manual retry.
+      schema:
+        type: string
+        pattern: ^op1_[A-Za-z0-9_-]{43}$
+    CapabilityLocator:
+      name: locator
+      in: path
+      required: true
+      description: Versioned 192-bit random routing locator. It grants no authority by itself.
+      schema:
+        type: string
+        pattern: ^loc1_[0-9a-f]{48}$
+    PublicBearer:
+      name: publicBearer
+      in: path
+      required: true
+      description: Versioned 256-bit recipient bearer secret. Treat the complete URL as sensitive.
+      schema:
+        type: string
+        pattern: ^pub1_[A-Za-z0-9_-]{43}$
+    OwnerBearer:
+      name: ownerBearer
+      in: path
+      required: true
+      description: Versioned 256-bit owner bearer secret. Treat the complete URL as sensitive.
+      schema:
+        type: string
+        pattern: ^own1_[A-Za-z0-9_-]{43}$
+  schemas:
+    HealthResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - ok
+        - service
+      properties:
+        ok:
+          type: boolean
+          const: true
+        service:
+          type: string
+          const: onceurl-worker
+    CapabilityMetadataResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - capability
+      properties:
+        capability:
+          type: object
+          additionalProperties: false
+          required:
+            - kind
+            - state
+            - created_at
+            - expires_at
+            - is_available
+            - policy
+            - access_code_required
+          properties:
+            kind:
+              type: string
+              const: secret
+            state:
+              type: string
+              enum: [DRAFT, ACTIVE, CONSUMED, EXPIRED, DISABLED, ABUSE_LOCKED, DELETED]
+            created_at:
+              type: string
+              format: date-time
+            expires_at:
+              type: [string, "null"]
+              format: date-time
+            is_available:
+              type: boolean
+              description: True only when an explicit claim could currently release ciphertext.
+            access_code_required:
+              type: boolean
+              description: Whether an access code is required for an explicit claim.
+            policy:
+              $ref: "#/components/schemas/CapabilityPolicySummary"
+    OwnerCapabilityMetadataResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - capability
+      properties:
+        capability:
+          type: object
+          additionalProperties: false
+          required:
+            - kind
+            - state
+            - created_at
+            - expires_at
+            - is_available
+            - policy
+            - access_code_required
+            - events
+          properties:
+            kind:
+              type: string
+              const: secret
+            state:
+              type: string
+              enum: [DRAFT, ACTIVE, CONSUMED, EXPIRED, DISABLED, ABUSE_LOCKED, DELETED]
+            created_at:
+              type: string
+              format: date-time
+            expires_at:
+              type: [string, "null"]
+              format: date-time
+            is_available:
+              type: boolean
+            access_code_required:
+              type: boolean
+            policy:
+              $ref: "#/components/schemas/CapabilityPolicySummary"
+            events:
+              type: array
+              maxItems: 64
+              items:
+                $ref: "#/components/schemas/CoarseCapabilityEvent"
+    CapabilityPolicySummary:
+      type: object
+      additionalProperties: false
+      required: [max_consumptions]
+      properties:
+        max_consumptions:
+          type: integer
+          const: 1
+    CoarseCapabilityEvent:
+      type: object
+      additionalProperties: false
+      required: [type, occurred_at]
+      properties:
+        type:
+          type: string
+          enum:
+            [
+              created,
+              consumed,
+              expired,
+              disabled,
+              abuse_locked,
+              reactivated,
+              abuse_lock_decided,
+              deleted
+            ]
+        occurred_at:
+          type: string
+          format: date-time
+    SecretPreparationRequest:
+      type: object
+      additionalProperties: false
+      required: [expires_in_seconds, challenge_id]
+      properties:
+        expires_in_seconds:
+          type: integer
+          enum: [3600, 86400, 604800, 2592000]
+        challenge_id:
+          $ref: "#/components/schemas/ChallengeId"
+        access_code_verifier:
+          $ref: "#/components/schemas/AccessCodeVerifier"
+    SecretPreparationResponse:
+      type: object
+      additionalProperties: false
+      required: [creation, policy, complete_by, preparation_proof]
+      properties:
+        creation:
+          $ref: "#/components/schemas/SecretCreationDescriptor"
+        policy:
+          $ref: "#/components/schemas/SecretPolicy"
+        complete_by:
+          type: string
+          format: date-time
+          description: Completion must reach the Worker by this time. Preparation is not persisted.
+        preparation_proof:
+          type: string
+          pattern: ^prep1_[A-Za-z0-9_-]{43}$
+          description: >-
+            Detached HMAC-SHA-256 proof over the fixed-order prep1 domain, complete creation
+            descriptor, complete public policy and complete_by. The encoding is prep1_ followed by
+            canonical unpadded base64url of 32 bytes.
+    SecretCreationDescriptor:
+      type: object
+      additionalProperties: false
+      required:
+        [operation_id, capability_id, locator, created_at, policy_hash, public_bearer, owner_bearer]
+      properties:
+        operation_id:
+          type: string
+          pattern: ^op1_[A-Za-z0-9_-]{43}$
+        capability_id:
+          type: string
+          pattern: ^cap1_[0-9a-f]{48}$
+        locator:
+          type: string
+          pattern: ^loc1_[0-9a-f]{48}$
+        created_at:
+          type: string
+          format: date-time
+        policy_hash:
+          type: string
+          pattern: ^[A-Za-z0-9_-]{43}$
+        public_bearer:
+          type: string
+          pattern: ^pub1_[A-Za-z0-9_-]{43}$
+        owner_bearer:
+          type: string
+          pattern: ^own1_[A-Za-z0-9_-]{43}$
+        access_code_verifier:
+          $ref: "#/components/schemas/AccessCodeVerifier"
+    AccessCodeVerifier:
+      type: object
+      additionalProperties: false
+      required: [version, algorithm, iterations, salt, digest]
+      properties:
+        version:
+          type: string
+          const: acv1
+        algorithm:
+          type: string
+          const: PBKDF2-SHA-256
+        iterations:
+          type: integer
+          const: 210000
+        salt:
+          type: string
+          pattern: ^[A-Za-z0-9_-]{22}$
+          description: Canonical unpadded base64url of 16 browser-generated random bytes.
+        digest:
+          type: string
+          pattern: ^[A-Za-z0-9_-]{43}$
+          description: Canonical unpadded base64url of the 32-byte browser-derived verifier.
+    SecretPolicy:
+      type: object
+      additionalProperties: false
+      required: [kind, expires_at, max_consumptions, reactivation, post_consumption]
+      properties:
+        kind:
+          type: string
+          const: secret
+        expires_at:
+          type: string
+          format: date-time
+        max_consumptions:
+          type: integer
+          const: 1
+        reactivation:
+          type: string
+          const: forbidden
+        post_consumption:
+          type: object
+          additionalProperties: false
+          required: [behavior, retention]
+          properties:
+            behavior:
+              type: string
+              const: retain_capability
+            retention:
+              type: object
+              additionalProperties: false
+              required: [mode]
+              properties:
+                mode:
+                  type: string
+                  const: until_expiry
+    SecretCompletionRequest:
+      type: object
+      additionalProperties: false
+      required: [creation, policy, complete_by, preparation_proof, ciphertext_envelope]
+      properties:
+        creation:
+          $ref: "#/components/schemas/SecretCreationDescriptor"
+        policy:
+          $ref: "#/components/schemas/SecretPolicy"
+        complete_by:
+          type: string
+          format: date-time
+        preparation_proof:
+          type: string
+          pattern: ^prep1_[A-Za-z0-9_-]{43}$
+        ciphertext_envelope:
+          $ref: "#/components/schemas/OuzkEnvelopeV1"
+    SecretCompletionResponse:
+      type: object
+      additionalProperties: false
+      required: [recipient_path, owner_path, expires_at]
+      properties:
+        recipient_path:
+          type: string
+          pattern: ^/s/loc1_[0-9a-f]{48}/pub1_[A-Za-z0-9_-]{43}$
+          description: Recipient authority path. The browser appends #k=<key>&v=ouzk-v1 locally.
+        owner_path:
+          type: string
+          pattern: ^/m/loc1_[0-9a-f]{48}/own1_[A-Za-z0-9_-]{43}$
+          description: Owner authority path. It never receives a fragment key.
+        expires_at:
+          type: string
+          format: date-time
+    ClaimRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - operation_id
+        - nonce
+      properties:
+        operation_id:
+          type: string
+          minLength: 1
+          maxLength: 512
+        nonce:
+          type: string
+          minLength: 1
+          maxLength: 512
+        access_code:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: >-
+            Optional raw code submitted only to the authoritative capability object; the encoded
+            value must not exceed 128 UTF-8 bytes.
+        challenge_id:
+          $ref: "#/components/schemas/ChallengeId"
+    ChallengeId:
+      type: string
+      pattern: ^chl2_[pa]_\d{1,16}_[A-Za-z0-9_-]{22}_[A-Za-z0-9_-]{43}$
+    ChallengeAction:
+      type: string
+      enum: [onceurl_prepare, onceurl_access_code]
+    ChallengeStateRequest:
+      type: object
+      additionalProperties: false
+      required: [challenge_id, action]
+      properties:
+        challenge_id:
+          $ref: "#/components/schemas/ChallengeId"
+        action:
+          $ref: "#/components/schemas/ChallengeAction"
+    ChallengeTicketResponse:
+      type: object
+      additionalProperties: false
+      required: [challenge_id, expires_in_seconds]
+      properties:
+        challenge_id:
+          $ref: "#/components/schemas/ChallengeId"
+        expires_in_seconds:
+          type: integer
+          const: 300
+    ClaimResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - outcome
+        - ciphertext_envelope
+      properties:
+        outcome:
+          type: string
+          const: released
+        ciphertext_envelope:
+          $ref: "#/components/schemas/OuzkEnvelopeV1"
+    OuzkEnvelopeV1:
+      type: object
+      additionalProperties: false
+      required: [version, alg, nonce, ciphertext, ad]
+      properties:
+        version:
+          type: string
+          const: ouzk-v1
+        alg:
+          type: string
+          const: AES-256-GCM
+        nonce:
+          type: string
+          pattern: ^[A-Za-z0-9_-]{16}$
+          minLength: 16
+          maxLength: 16
+        ciphertext:
+          type: string
+          pattern: ^[A-Za-z0-9_-]+$
+          minLength: 23
+          maxLength: 87403
+          description: Canonical unpadded base64url of 1-65,536 plaintext bytes plus the 16-byte GCM tag.
+        ad:
+          $ref: "#/components/schemas/OuzkAssociatedDataV1"
+    OuzkAssociatedDataV1:
+      type: object
+      additionalProperties: false
+      required: [capabilityId, createdAt, kind, locator, policyHash, purpose, version]
+      properties:
+        capabilityId:
+          type: string
+          pattern: ^cap1_[0-9a-f]{48}$
+        createdAt:
+          type: string
+          format: date-time
+        kind:
+          type: string
+          const: secret
+        locator:
+          type: string
+          pattern: ^loc1_[0-9a-f]{48}$
+        policyHash:
+          type: string
+          pattern: ^[A-Za-z0-9_-]{43}$
+        purpose:
+          type: string
+          const: onceurl.phase1a.secret-text
+        version:
+          type: string
+          const: ouzk-v1
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - error
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required:
+            - code
+            - message
+            - request_id
+            - details
+          properties:
+            code:
+              type: string
+              description: Stable machine-readable error identifier.
+              examples:
+                - not_found
+                - internal_error
+            message:
+              type: string
+              description: Public-safe error message.
+            request_id:
+              type: string
+              format: uuid
+            details:
+              type: object
+              additionalProperties: true

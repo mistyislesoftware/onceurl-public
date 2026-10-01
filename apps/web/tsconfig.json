@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "rootDir": ".",
+    "tsBuildInfoFile": "../../.tmp/typescript/apps-web.tsbuildinfo",
+    "noEmit": true
+  },
+  "include": ["src", "e2e", "*.config.ts"]
+}

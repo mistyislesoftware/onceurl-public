@@ -1,0 +1,53 @@
+name: Public CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  public-checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Setup pnpm
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271
+        with:
+          version: 11.13.0
+          run_install: false
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24
+      - name: Install frozen dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Verify publication signature and complete tree
+        env:
+          PUBLICATION_KEY_FINGERPRINT: ${{ vars.PUBLICATION_KEY_FINGERPRINT }}
+          PUBLIC_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: pnpm provenance:check
+      - name: Validate public source
+        run: |
+          pnpm audit:dependencies
+          pnpm format
+          pnpm repository-policy:check
+          pnpm typecheck
+          pnpm lint
+          pnpm test
+          pnpm cf:types:check
+          pnpm wrangler:validate
+          pnpm db:migrations:check
+          pnpm db:test:migrations
+          pnpm openapi:validate
+          pnpm test:integration
+          pnpm exec playwright install --with-deps chromium
+          pnpm test:browser
+          pnpm build

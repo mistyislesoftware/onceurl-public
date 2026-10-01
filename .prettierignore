@@ -1,0 +1,8 @@
+dist
+.wrangler
+coverage
+pnpm-lock.yaml
+publication/manifest.json
+publication/signature.json
+apps/worker/worker-configuration.d.ts
+apps/marketing/worker-configuration.d.ts

@@ -1,0 +1,222 @@
+{
+  "schema": "onceurl.ouzk-v1.test-vectors",
+  "version": "ouzk-v1",
+  "algorithm": "AES-256-GCM",
+  "generatedBy": "Node.js crypto createCipheriv backed by OpenSSL, independent from Web Crypto verification tests",
+  "limits": {
+    "maxPlaintextBytes": 65536,
+    "maxEnvelopeBytes": 98304,
+    "maxAssociatedDataBytes": 2048,
+    "nonceBytes": 12,
+    "keyBytes": 32,
+    "tagBytes": 16
+  },
+  "vectors": [
+    {
+      "name": "ascii-basic",
+      "description": "ascii-basic",
+      "plaintextUtf8": "correct horse battery staple",
+      "key": {
+        "hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+        "base64url": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+      },
+      "nonce": {
+        "hex": "1af38c2dc2b96ffdd8669409",
+        "base64url": "GvOMLcK5b_3YZpQJ"
+      },
+      "associatedData": {
+        "object": {
+          "capabilityId": "cap_01J00000000000000000000001",
+          "createdAt": "2026-07-13T22:29:18.789Z",
+          "kind": "secret",
+          "locator": "loc_01J00000000000000000000001",
+          "policyHash": "viZGNTt2BreK_8ktNd49doot8mga61PTLqD8vyBQ3tc",
+          "purpose": "onceurl.phase1a.secret-text",
+          "version": "ouzk-v1"
+        },
+        "canonicalJson": "{\"capabilityId\":\"cap_01J00000000000000000000001\",\"createdAt\":\"2026-07-13T22:29:18.789Z\",\"kind\":\"secret\",\"locator\":\"loc_01J00000000000000000000001\",\"policyHash\":\"viZGNTt2BreK_8ktNd49doot8mga61PTLqD8vyBQ3tc\",\"purpose\":\"onceurl.phase1a.secret-text\",\"version\":\"ouzk-v1\"}",
+        "hex": "7b226361706162696c6974794964223a226361705f30314a3030303030303030303030303030303030303030303031222c22637265617465644174223a22323032362d30372d31335432323a32393a31382e3738395a222c226b696e64223a22736563726574222c226c6f6361746f72223a226c6f635f30314a3030303030303030303030303030303030303030303031222c22706f6c69637948617368223a2276695a474e5474324272654b5f386b744e643439646f6f74386d6761363150544c71443876794251337463222c22707572706f7365223a226f6e636575726c2e706861736531612e7365637265742d74657874222c2276657273696f6e223a226f757a6b2d7631227d"
+      },
+      "ciphertext": {
+        "hex": "c11fecbf52829261144e8c7b319568d4f172be16c1ba060297fb1375",
+        "base64url": "wR_sv1KCkmEUTox7MZVo1PFyvhbBugYCl_sTdQ"
+      },
+      "tag": {
+        "hex": "00663b8362241469e5e71515613ded32",
+        "base64url": "AGY7g2IkFGnl5xUVYT3tMg"
+      },
+      "ciphertextAndTag": {
+        "hex": "c11fecbf52829261144e8c7b319568d4f172be16c1ba060297fb137500663b8362241469e5e71515613ded32",
+        "base64url": "wR_sv1KCkmEUTox7MZVo1PFyvhbBugYCl_sTdQBmO4NiJBRp5ecVFWE97TI"
+      }
+    },
+    {
+      "name": "unicode-secret",
+      "description": "unicode-secret",
+      "plaintextUtf8": "Sphinx of black quartz, judge my vow. 🔐 こんにちは",
+      "key": {
+        "hex": "603deb1015ca71be2b73aef0857d77811f352c073b6108d72d9810a30914dff4",
+        "base64url": "YD3rEBXKcb4rc67whX13gR81LAc7YQjXLZgQowkU3_Q"
+      },
+      "nonce": {
+        "hex": "cafebabefacedbaddecaf888",
+        "base64url": "yv66vvrO263eyviI"
+      },
+      "associatedData": {
+        "object": {
+          "capabilityId": "cap_01J00000000000000000000002",
+          "createdAt": "2026-07-13T22:30:00.000Z",
+          "kind": "secret",
+          "locator": "loc_01J00000000000000000000002",
+          "policyHash": "6Atp6QSq9PVNEZp2b6Ja7Lw9ahaid9poUuKaLhwrNVQ",
+          "purpose": "onceurl.phase1a.secret-text",
+          "version": "ouzk-v1"
+        },
+        "canonicalJson": "{\"capabilityId\":\"cap_01J00000000000000000000002\",\"createdAt\":\"2026-07-13T22:30:00.000Z\",\"kind\":\"secret\",\"locator\":\"loc_01J00000000000000000000002\",\"policyHash\":\"6Atp6QSq9PVNEZp2b6Ja7Lw9ahaid9poUuKaLhwrNVQ\",\"purpose\":\"onceurl.phase1a.secret-text\",\"version\":\"ouzk-v1\"}",
+        "hex": "7b226361706162696c6974794964223a226361705f30314a3030303030303030303030303030303030303030303032222c22637265617465644174223a22323032362d30372d31335432323a33303a30302e3030305a222c226b696e64223a22736563726574222c226c6f6361746f72223a226c6f635f30314a3030303030303030303030303030303030303030303032222c22706f6c69637948617368223a2236417470365153713950564e455a703262364a61374c7739616861696439706f55754b614c6877724e5651222c22707572706f7365223a226f6e636575726c2e706861736531612e7365637265742d74657874222c2276657273696f6e223a226f757a6b2d7631227d"
+      },
+      "ciphertext": {
+        "hex": "f4578019813ef114f0be1817b69ba4e0769f41bc613616375a41c12c084faca4151ffc7ea0aaf599d7ab59b2b157cd1e99ac54401e419c5f6c59",
+        "base64url": "9FeAGYE-8RTwvhgXtpuk4HafQbxhNhY3WkHBLAhPrKQVH_x-oKr1mderWbKxV80emaxUQB5BnF9sWQ"
+      },
+      "tag": {
+        "hex": "1cdbac1a69a8fed470c792a06cc054d3",
+        "base64url": "HNusGmmo_tRwx5KgbMBU0w"
+      },
+      "ciphertextAndTag": {
+        "hex": "f4578019813ef114f0be1817b69ba4e0769f41bc613616375a41c12c084faca4151ffc7ea0aaf599d7ab59b2b157cd1e99ac54401e419c5f6c591cdbac1a69a8fed470c792a06cc054d3",
+        "base64url": "9FeAGYE-8RTwvhgXtpuk4HafQbxhNhY3WkHBLAhPrKQVH_x-oKr1mderWbKxV80emaxUQB5BnF9sWRzbrBppqP7UcMeSoGzAVNM"
+      }
+    },
+    {
+      "name": "one-byte-boundary",
+      "description": "one-byte-boundary",
+      "plaintextUtf8": "x",
+      "key": {
+        "hex": "feffe9928665731c6d6a8f9467308308feffe9928665731c6d6a8f9467308308",
+        "base64url": "_v_pkoZlcxxtao-UZzCDCP7_6ZKGZXMcbWqPlGcwgwg"
+      },
+      "nonce": {
+        "hex": "9313225df88406e555909c5a",
+        "base64url": "kxMiXfiEBuVVkJxa"
+      },
+      "associatedData": {
+        "object": {
+          "capabilityId": "cap_01J00000000000000000000003",
+          "createdAt": "2026-07-13T22:31:00.000Z",
+          "kind": "secret",
+          "locator": "loc_01J00000000000000000000003",
+          "policyHash": "mVXLA4QJ3yv4b3fLMcCa-zYHJZjrE1MOiM4W6KJSixk",
+          "purpose": "onceurl.phase1a.secret-text",
+          "version": "ouzk-v1"
+        },
+        "canonicalJson": "{\"capabilityId\":\"cap_01J00000000000000000000003\",\"createdAt\":\"2026-07-13T22:31:00.000Z\",\"kind\":\"secret\",\"locator\":\"loc_01J00000000000000000000003\",\"policyHash\":\"mVXLA4QJ3yv4b3fLMcCa-zYHJZjrE1MOiM4W6KJSixk\",\"purpose\":\"onceurl.phase1a.secret-text\",\"version\":\"ouzk-v1\"}",
+        "hex": "7b226361706162696c6974794964223a226361705f30314a3030303030303030303030303030303030303030303033222c22637265617465644174223a22323032362d30372d31335432323a33313a30302e3030305a222c226b696e64223a22736563726574222c226c6f6361746f72223a226c6f635f30314a3030303030303030303030303030303030303030303033222c22706f6c69637948617368223a226d56584c4134514a337976346233664c4d6343612d7a59484a5a6a7245314d4f694d3457364b4a5369786b222c22707572706f7365223a226f6e636575726c2e706861736531612e7365637265742d74657874222c2276657273696f6e223a226f757a6b2d7631227d"
+      },
+      "ciphertext": {
+        "hex": "6e",
+        "base64url": "bg"
+      },
+      "tag": {
+        "hex": "afbb5a6df57b371f986306a21a086601",
+        "base64url": "r7tabfV7Nx-YYwaiGghmAQ"
+      },
+      "ciphertextAndTag": {
+        "hex": "6eafbb5a6df57b371f986306a21a086601",
+        "base64url": "bq-7Wm31ezcfmGMGohoIZgE"
+      }
+    }
+  ],
+  "negativeCases": [
+    {
+      "name": "wrong-key",
+      "vector": "ascii-basic",
+      "mutation": "replace first key byte with ff",
+      "expected": "decrypt_failure"
+    },
+    {
+      "name": "wrong-nonce",
+      "vector": "ascii-basic",
+      "mutation": "replace first nonce byte with ff",
+      "expected": "decrypt_failure"
+    },
+    {
+      "name": "ciphertext-bit-flip",
+      "vector": "ascii-basic",
+      "mutation": "xor first ciphertext byte with 01",
+      "expected": "decrypt_failure"
+    },
+    {
+      "name": "tag-bit-flip",
+      "vector": "ascii-basic",
+      "mutation": "xor first tag byte with 01",
+      "expected": "decrypt_failure"
+    },
+    {
+      "name": "associated-data-purpose-tamper",
+      "vector": "ascii-basic",
+      "mutation": "change purpose",
+      "expected": "decrypt_failure"
+    },
+    {
+      "name": "unsupported-version",
+      "vector": "ascii-basic",
+      "mutation": "change version to ouzk-v0",
+      "expected": "unsupported_version"
+    },
+    {
+      "name": "wrong-algorithm",
+      "vector": null,
+      "mutation": "change algorithm to AES-128-GCM",
+      "expected": "unsupported_algorithm"
+    },
+    {
+      "name": "padded-base64url",
+      "vector": "ascii-basic",
+      "mutation": "append = to nonce",
+      "expected": "invalid_encoding"
+    },
+    {
+      "name": "invalid-base64url-alphabet",
+      "vector": "ascii-basic",
+      "mutation": "replace nonce character with +",
+      "expected": "invalid_encoding"
+    },
+    {
+      "name": "non-canonical-base64url-pad-bits",
+      "vector": "one-byte-boundary",
+      "mutation": "replace canonical one-byte ciphertext base64url bg with alias bh",
+      "expected": "invalid_encoding"
+    },
+    {
+      "name": "truncated-tag",
+      "vector": "ascii-basic",
+      "mutation": "remove final byte from ciphertextAndTag",
+      "expected": "decrypt_failure"
+    },
+    {
+      "name": "oversize-ciphertext",
+      "vector": "ascii-basic",
+      "mutation": "decoded ciphertextAndTag length 65553 bytes",
+      "expected": "size_limit_exceeded"
+    },
+    {
+      "name": "zero-length-plaintext",
+      "vector": null,
+      "mutation": "plaintext length 0 before encryption",
+      "expected": "invalid_plaintext_size"
+    },
+    {
+      "name": "missing-associated-data-field",
+      "vector": "ascii-basic",
+      "mutation": "remove policyHash from associated data",
+      "expected": "invalid_associated_data"
+    },
+    {
+      "name": "mismatched-capability-metadata",
+      "vector": "ascii-basic",
+      "mutation": "change capabilityId from the authoritative record",
+      "expected": "associated_data_mismatch"
+    }
+  ]
+}
