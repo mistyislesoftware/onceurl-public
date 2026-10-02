@@ -65,7 +65,7 @@ export const fileSchema = z.strictObject({
   size: z.number().int().nonnegative().max(10_000_000),
   sha256: DIGEST
 });
-export const manifestSchema = z.strictObject({
+const bootstrapManifestSchema = z.strictObject({
   schemaVersion: z.literal(1),
   purpose: z.literal("onceurl.publication.v1"),
   canonicalSourceSha: SHA,
@@ -76,6 +76,20 @@ export const manifestSchema = z.strictObject({
   files: z.array(fileSchema).min(1).max(10000),
   exportDigest: DIGEST
 });
+export const publicationParentSchema = z.strictObject({
+  publicationSequence: z.number().int().min(2).safe(),
+  previousAcceptedDigest: DIGEST,
+  previousPublicSourceSha: SHA,
+  signerFingerprint: DIGEST
+});
+export const manifestSchema = z.union([
+  bootstrapManifestSchema,
+  bootstrapManifestSchema.extend({
+    schemaVersion: z.literal(2),
+    purpose: z.literal("onceurl.publication.v2"),
+    publication: publicationParentSchema
+  })
+]);
 export function parseManifest(bytes) {
   const manifest = manifestSchema.parse(JSON.parse(bytes.toString("utf8")));
   assert(encode(manifest).equals(bytes), "Manifest is not canonical JSON");
