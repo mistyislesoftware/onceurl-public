@@ -20,7 +20,7 @@
     "format": "prettier --check .",
     "format:write": "prettier --write .",
     "lint": "eslint .",
-    "test": "vitest run --exclude apps/worker/src/platform.integration.test.ts --exclude apps/marketing/src/platform.integration.test.ts --exclude packages/testing/src/deployable-artifacts.integration.test.ts --exclude scripts/local/platform.integration.test.mjs --exclude apps/worker/src/capability-durable-object.runtime.test.ts --exclude apps/worker/src/abuse-control-durable-object.runtime.test.ts --exclude apps/worker/src/capability-delivery.runtime.test.ts && pnpm test:worker-runtime",
+    "test": "vitest run --exclude apps/worker/src/platform.integration.test.ts --exclude apps/marketing/src/platform.integration.test.ts --exclude packages/testing/src/deployable-artifacts.integration.test.ts --exclude scripts/local/platform.integration.test.mjs --exclude \"apps/worker/src/**/*.runtime.test.ts\" && pnpm test:worker-runtime",
     "test:browser": "playwright test",
     "test:worker-runtime": "vitest run --config apps/worker/src/vitest.runtime.config.ts",
     "typecheck": "pnpm -r typecheck",

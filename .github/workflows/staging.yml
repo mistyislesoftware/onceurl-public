@@ -1,0 +1,88 @@
+name: Protected public staging
+
+on:
+  workflow_dispatch:
+    inputs:
+      public_source_sha:
+        description: Exact accepted public main SHA
+        required: true
+        type: string
+      accepted_record_digest:
+        description: Exact trusted accepted ledger record digest
+        required: true
+        type: string
+      public_ci_run_id:
+        description: Exact successful public main CI run
+        required: true
+        type: string
+      public_ci_run_attempt:
+        description: Exact successful public main CI attempt
+        required: true
+        type: string
+      public_ci_job_id:
+        description: Exact successful public main CI job
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: protected-public-staging
+  cancel-in-progress: false
+
+jobs:
+  staging:
+    if: github.repository == 'mistyislesoftware/onceurl-public' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: staging
+    permissions:
+      contents: read
+      actions: read
+      checks: read
+      id-token: write
+    steps:
+      - name: Checkout exact accepted public main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.public_source_sha }}
+      - name: Setup pnpm
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271
+        with:
+          version: 11.13.0
+          run_install: false
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24
+      - name: Install frozen dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Verify and execute protected staging controller
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PUBLIC_SOURCE_SHA: ${{ inputs.public_source_sha }}
+          ACCEPTED_RECORD_DIGEST: ${{ inputs.accepted_record_digest }}
+          PUBLIC_CI_RUN_ID: ${{ inputs.public_ci_run_id }}
+          PUBLIC_CI_RUN_ATTEMPT: ${{ inputs.public_ci_run_attempt }}
+          PUBLIC_CI_JOB_ID: ${{ inputs.public_ci_job_id }}
+          PUBLICATION_KEY_FINGERPRINT: ${{ vars.PUBLICATION_KEY_FINGERPRINT }}
+          FRESHNESS_PUBLIC_KEY: ${{ vars.FRESHNESS_PUBLIC_KEY }}
+          FRESHNESS_KEY_FINGERPRINT: ${{ vars.FRESHNESS_KEY_FINGERPRINT }}
+          FRESHNESS_AUTHORITY_URL: ${{ vars.FRESHNESS_AUTHORITY_URL }}
+          STAGING_ACTIVATION: ${{ vars.STAGING_ACTIVATION }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.STAGING_CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.STAGING_CLOUDFLARE_API_TOKEN }}
+          STAGING_DATABASE_ID: ${{ vars.STAGING_DATABASE_ID }}
+          STAGING_BUCKET_NAME: ${{ vars.STAGING_BUCKET_NAME }}
+          FUNCTIONAL_ORIGIN: ${{ vars.STAGING_FUNCTIONAL_ORIGIN }}
+          MARKETING_ORIGIN: ${{ vars.STAGING_MARKETING_ORIGIN }}
+        run: node scripts/delivery/public-staging.mjs
+      - name: Preserve sanitized campaign evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: staging-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .tmp/public-staging/evidence.json
+          if-no-files-found: error
+          retention-days: 30
