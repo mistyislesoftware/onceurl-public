@@ -1,5 +1,5 @@
 export type FunctionalRouteClass =
-  "api" | "application" | "asset" | "boundary" | "capability" | "challenge";
+  "api" | "application" | "asset" | "boundary" | "capability" | "challenge" | "admin";
 
 export const TURNSTILE_ORIGIN = "https://challenges.cloudflare.com";
 
@@ -107,7 +107,8 @@ const RESERVED_SEGMENTS = new Set([
   "api",
   "assets",
   "challenge",
-  "health"
+  "health",
+  "internal"
 ]);
 
 function isNonCanonicalPath(pathname: string, firstSegment: string): boolean {
@@ -137,6 +138,11 @@ export function classifyFunctionalRoute(pathname: string): FunctionalRouteClass 
 
   if (MARKETING_SEGMENTS.has(firstSegment)) {
     return "boundary";
+  }
+  if (firstSegment === "internal") {
+    return pathname === "/internal/admin" || pathname.startsWith("/internal/admin/")
+      ? "admin"
+      : "boundary";
   }
 
   if (firstSegment === "api" || pathname === "/health") {
@@ -205,6 +211,12 @@ export function applyFunctionalRoutePolicy(
     headers.set("Content-Security-Policy", APPLICATION_CONTENT_SECURITY_POLICY);
     headers.set("Referrer-Policy", "no-referrer");
     headers.set("X-Robots-Tag", "noindex, nofollow");
+  } else if (routeClass === "admin") {
+    headers.set("Cache-Control", "private, no-store");
+    headers.set("Content-Security-Policy", CAPABILITY_CONTENT_SECURITY_POLICY);
+    headers.set("Pragma", "no-cache");
+    headers.set("Referrer-Policy", "no-referrer");
+    headers.set("X-Robots-Tag", "noindex, nofollow, noarchive");
   } else if (routeClass === "capability") {
     headers.set("Cache-Control", "no-store, private");
     headers.set("Content-Security-Policy", CAPABILITY_CONTENT_SECURITY_POLICY);

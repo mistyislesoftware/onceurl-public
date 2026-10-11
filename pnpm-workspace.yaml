@@ -10,7 +10,12 @@ overrides:
   # The latest Worker test pool still pins Miniflare to undici 7.29.0.
   # Remove once all Miniflare parents resolve >=7.29.1 and repository gates pass.
   "miniflare>undici": 7.29.1
-  sharp: 0.35.4
+  # Current Miniflare parents still permit the affected sharp 0.35.4 line.
+  # Remove once all parents resolve >=0.35.5 and repository gates pass.
+  sharp: 0.35.5
+  # Tailwind/PostCSS parents still permit affected source-map-js 1.2.1.
+  # Remove once all parents resolve >=1.2.2 and repository gates pass.
+  source-map-js: 1.2.2
 allowBuilds:
   esbuild: false
   sharp: false

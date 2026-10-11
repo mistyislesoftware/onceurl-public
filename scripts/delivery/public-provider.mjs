@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
@@ -11,8 +11,10 @@ export const runnerDescriptorSchema = z.strictObject({
   moduleDigest: DIGEST.nullable()
 });
 export function requireReviewedRunner(tree) {
+  const descriptorEntry = tree.get("publication/staging-runner.json");
+  assert(descriptorEntry?.mode === "100644", "Reviewed provider v2 runner unavailable");
   const descriptor = runnerDescriptorSchema.parse(
-    JSON.parse(tree.get("publication/staging-runner.json")?.bytes.toString("utf8") ?? "null")
+    JSON.parse(descriptorEntry.bytes.toString("utf8"))
   );
   const module = tree.get("scripts/delivery/staging-provider-v2.mjs");
   assert(
@@ -38,11 +40,17 @@ export function providerAdapter({
   async function load() {
     const descriptor = requireReviewedRunner(tree);
     const path = resolve(root, "scripts/delivery/staging-provider-v2.mjs");
+    const metadata = lstatSync(path);
     assert(
-      digest(readFileSync(path)) === descriptor.moduleDigest,
+      metadata.isFile() &&
+        !metadata.isSymbolicLink() &&
+        realpathSync(path) ===
+          resolve(realpathSync(root), "scripts/delivery/staging-provider-v2.mjs") &&
+        (process.platform === "win32" || (metadata.mode & 0o111) === 0) &&
+        digest(readFileSync(path)) === descriptor.moduleDigest,
       "Provider implementation changed after verification"
     );
-    runner = await import(pathToFileURL(path).href);
+    runner = await import(`${pathToFileURL(path).href}?reviewed=${descriptor.moduleDigest}`);
     assert(
       runner.contract === "onceurl.staging.provider.v2" &&
         ["preflight", "build", "release", "campaign", "readRelease", "readEvidence"].every(
@@ -64,8 +72,12 @@ export function providerAdapter({
       await load();
       return runner.preflight({ ...context(), identity });
     },
-    build: (identity) => runner.build({ ...context(), identity }),
-    release(identity, _config, releaseAssertionDigest, assertion) {
+    async build(identity) {
+      await load();
+      return runner.build({ ...context(), identity });
+    },
+    async release(identity, _config, releaseAssertionDigest, assertion) {
+      await load();
       boundary(assertion);
       return runner.release({
         ...context(),
@@ -75,7 +87,7 @@ export function providerAdapter({
         beforeMutation: () => boundary(assertion)
       });
     },
-    campaign(
+    async campaign(
       identity,
       _config,
       deployment,
@@ -83,6 +95,7 @@ export function providerAdapter({
       campaignAssertionDigest,
       assertion
     ) {
+      await load();
       boundary(assertion);
       return runner.campaign({
         ...context(),

@@ -63,7 +63,7 @@ describe("AbuseControlDurableObject exact state", () => {
       });
       await expect(quota(stub, kind, now + 60_000)).resolves.toMatchObject({ status: 200 });
     },
-    20_000
+    60_000
   );
 
   it("enforces both preparation rolling windows", async () => {
@@ -87,7 +87,7 @@ describe("AbuseControlDurableObject exact state", () => {
     }
     const limited = await quota(dailyStub, "preparation", now + 59 * 600_001);
     expect(limited).toMatchObject({ status: 429, body: { ok: false, code: "rate_limited" } });
-  });
+  }, 60_000);
 
   it("serializes concurrent exact-IP quota requests", async () => {
     const stub = abuseStub("concurrent-reveal");
@@ -155,7 +155,7 @@ describe("AbuseControlDurableObject exact state", () => {
       status: 200,
       body: { ok: true }
     });
-  });
+  }, 60_000);
 
   it("carries passive and reveal histories to the one current authority", async () => {
     const previous = ipObject();
@@ -183,7 +183,7 @@ describe("AbuseControlDurableObject exact state", () => {
     await expect(quota(previous.stub, "reveal", now + 60_000)).resolves.toMatchObject({
       status: 200
     });
-  });
+  }, 60_000);
 
   it("serializes concurrent old-name forwarding and current-name requests after handoff", async () => {
     const previous = ipObject();

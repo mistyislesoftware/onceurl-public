@@ -113,13 +113,17 @@ describe("repository-owned development environment", () => {
 
     await mkdir(join(repository, ".wrangler"), { recursive: true });
     await mkdir(outside, { recursive: true });
-    await symlink(outside, state);
+    await symlink(outside, state, process.platform === "win32" ? "junction" : "dir");
     await expect(resetLocalState(repository, state)).rejects.toThrow(/symbolic-link/u);
 
     await rm(repository, { recursive: true, force: true });
     await mkdir(repository, { recursive: true });
     await writeFile(join(outside, "sentinel"), "must survive", "utf8");
-    await symlink(outside, join(repository, ".wrangler"));
+    await symlink(
+      outside,
+      join(repository, ".wrangler"),
+      process.platform === "win32" ? "junction" : "dir"
+    );
     await expect(resetLocalState(repository, state)).rejects.toThrow(/symbolic-link/u);
     await expect(readFile(join(outside, "sentinel"), "utf8")).resolves.toBe("must survive");
 

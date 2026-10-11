@@ -244,10 +244,16 @@ export function runWranglerLocal(args, options = {}) {
     "Local Wrangler commands cannot override the top-level environment"
   );
 
-  return runPnpm(["exec", "wrangler", ...args, "--env="], {
-    ...options,
-    env: localCloudflareEnvironment()
-  });
+  // Invoke the pinned CLI directly. pnpm exec uses a Windows command shim,
+  // which truncates multiline SQL arguments after their first statement.
+  return runProcess(
+    process.execPath,
+    [join(rootDirectory, "node_modules/wrangler/bin/wrangler.js"), ...args, "--env="],
+    {
+      ...options,
+      env: localCloudflareEnvironment()
+    }
+  );
 }
 
 /**

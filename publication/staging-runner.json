@@ -1,6 +1,6 @@
 {
-  "available": false,
+  "schemaVersion": 1,
   "contract": "onceurl.staging.provider.v2",
-  "moduleDigest": null,
-  "schemaVersion": 1
+  "available": true,
+  "moduleDigest": "523038c50b234ba84ecbab191b3a325f11134b889118ad939d5658ed84e6be9d"
 }

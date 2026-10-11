@@ -7,6 +7,43 @@ import {
 } from "./turnstile";
 
 describe("isolated Turnstile verification", () => {
+  it.each([
+    ["functional.invalid", "onceurl_report_submit", 299_999, "verified"],
+    ["functional.invalid", "onceurl_prepare", 1, "rejected"],
+    ["functional.invalid.attacker.invalid", "onceurl_report_submit", 1, "rejected"],
+    ["functional.invalid", "onceurl_report_submit", 300_001, "rejected"]
+  ] as const)(
+    "checks report action/hostname/freshness: %s %s %i",
+    async (hostname, action, age, expected) => {
+      const now = 1_800_000_000_000;
+      const fetcher = vi.fn<typeof fetch>(() =>
+        Promise.resolve(
+          Response.json({
+            success: true,
+            hostname,
+            action,
+            challenge_ts: new Date(now - age).toISOString()
+          })
+        )
+      );
+      expect(
+        await verifyTurnstileToken(
+          "opaque-test-token",
+          "onceurl_report_submit",
+          "functional.invalid",
+          "test-secret",
+          now,
+          fetcher
+        )
+      ).toBe(expected);
+      const requestBody = fetcher.mock.calls[0]?.[1]?.body;
+      if (typeof requestBody !== "string") throw new Error("Expected a JSON Siteverify request");
+      const sent: unknown = JSON.parse(requestBody);
+      if (typeof sent !== "object" || sent === null)
+        throw new Error("Expected a Siteverify object");
+      expect(Object.keys(sent).sort()).toEqual(["idempotency_key", "response", "secret"]);
+    }
+  );
   it("validates exact action, hostname and five-minute freshness without sending an IP", async () => {
     const now = Date.parse("2026-08-28T12:00:00.000Z");
     const fetcher = vi.fn<typeof fetch>(() =>

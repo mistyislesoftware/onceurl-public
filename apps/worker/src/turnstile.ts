@@ -129,8 +129,8 @@ export const TURNSTILE_CHALLENGE_CLIENT = `(() => {
   const fragment = new URLSearchParams(window.location.hash.slice(1));
   const challengeId = fragment.get("c");
   const action = fragment.get("a");
-  const valid = fragment.size === 2 && /^chl2_[pa]_\\d{1,16}_[A-Za-z0-9_-]{22}_[A-Za-z0-9_-]{43}$/.test(challengeId || "") &&
-    (action === "onceurl_prepare" || action === "onceurl_access_code");
+  const valid = fragment.size === 2 && /^chl2_[par]_\\d{1,16}_[A-Za-z0-9_-]{22}_[A-Za-z0-9_-]{43}$/.test(challengeId || "") &&
+    (action === "onceurl_prepare" || action === "onceurl_access_code" || action === "onceurl_report_submit");
   window.history.replaceState(null, "", window.location.pathname);
   if (!valid) {
     if (status) status.textContent = "This security check is unavailable.";

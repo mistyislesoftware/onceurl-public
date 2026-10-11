@@ -56,27 +56,32 @@ afterAll(async () => {
 });
 
 describe("local migrate, seed, and reset lifecycle", () => {
-  it("is repeatable and recreates the same deterministic snapshot after reset", async () => {
-    migrate();
-    migrate();
-    seedLocalDatabase(isolatedState);
-    const firstSnapshot = querySeedSnapshot();
+  it(
+    "is repeatable and recreates the same deterministic snapshot after reset",
+    async () => {
+      migrate();
+      migrate();
+      seedLocalDatabase(isolatedState);
+      const firstSnapshot = querySeedSnapshot();
 
-    await resetLocalState(isolatedRepository, isolatedState);
-    await expect(readFile(join(isolatedState, "sentinel"), "utf8")).rejects.toMatchObject({
-      code: "ENOENT"
-    });
+      await resetLocalState(isolatedRepository, isolatedState);
+      await expect(readFile(join(isolatedState, "sentinel"), "utf8")).rejects.toMatchObject({
+        code: "ENOENT"
+      });
 
-    migrate();
-    seedLocalDatabase(isolatedState);
-    const secondSnapshot = querySeedSnapshot();
+      migrate();
+      seedLocalDatabase(isolatedState);
+      const secondSnapshot = querySeedSnapshot();
 
-    expect(secondSnapshot).toEqual(firstSnapshot);
-    expect(JSON.stringify(secondSnapshot)).toContain("local-synthetic-alpha");
-    expect(JSON.stringify(secondSnapshot)).toContain("local-synthetic-beta");
-    expect(secondSnapshot.map((row) => row.routing_locator)).toEqual([
-      `loc1_${"a".repeat(48)}`,
-      `loc1_${"b".repeat(48)}`
-    ]);
-  }, 60_000);
+      expect(secondSnapshot).toEqual(firstSnapshot);
+      expect(JSON.stringify(secondSnapshot)).toContain("local-synthetic-alpha");
+      expect(JSON.stringify(secondSnapshot)).toContain("local-synthetic-beta");
+      expect(secondSnapshot.map((row) => row.routing_locator)).toEqual([
+        `loc1_${"a".repeat(48)}`,
+        `loc1_${"b".repeat(48)}`
+      ]);
+      // Windows CLI startup dominates this real multi-process lifecycle fixture.
+    },
+    process.platform === "win32" ? 120_000 : 60_000
+  );
 });

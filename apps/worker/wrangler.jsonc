@@ -123,14 +123,27 @@
       },
       "triggers": {
         "crons": []
-      }
+      },
+      "workflows": []
     },
     "staging": {
       "name": "onceurl-worker-staging",
       "vars": {
         "DEPLOYMENT_ENVIRONMENT": "staging",
         "MARKETING_ORIGIN": "https://marketing.staging.invalid",
-        "FUNCTIONAL_ORIGIN": "https://functional.staging.invalid"
+        "FUNCTIONAL_ORIGIN": "https://functional.staging.invalid",
+        "STAGING_CANONICAL_SOURCE_SHA": "unconfigured",
+        "STAGING_PUBLIC_SOURCE_SHA": "unconfigured",
+        "STAGING_EXPORT_DIGEST": "unconfigured",
+        "STAGING_PUBLICATION_SEQUENCE": "unconfigured",
+        "STAGING_ACCEPTED_RECORD_DIGEST": "unconfigured",
+        "STAGING_PUBLIC_CI_RUN_ID": "unconfigured",
+        "STAGING_PUBLIC_CI_RUN_ATTEMPT": "unconfigured",
+        "STAGING_PUBLIC_CI_JOB_ID": "unconfigured",
+        "STAGING_WORKFLOW_RUN_ID": "unconfigured",
+        "STAGING_WORKFLOW_RUN_ATTEMPT": "unconfigured",
+        "STAGING_CAMPAIGN_ID": "unconfigured",
+        "STAGING_CONFIGURATION_DIGEST": "unconfigured"
       },
       "d1_databases": [
         {
@@ -199,7 +212,21 @@
       },
       "triggers": {
         "crons": ["*/5 * * * *"]
+      },
+      "workflows": [
+        {
+          "binding": "STAGING_RELIABILITY",
+          "name": "onceurl-staging-reliability",
+          "class_name": "StagingReliabilityWorkflow",
+          "limits": {
+            "steps": 256
+          }
+        }
+      ],
+      "version_metadata": {
+        "binding": "CF_VERSION_METADATA"
       }
     }
-  }
+  },
+  "workflows": []
 }

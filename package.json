@@ -47,6 +47,7 @@
     "validate:local": "pnpm env:check && pnpm db:migrations:check && pnpm test:local-environment",
     "validate:repository": "node scripts/local/validate-repository.mjs",
     "wrangler:validate:staging": "pnpm build && wrangler deploy --config apps/worker/wrangler.jsonc --env staging --dry-run --outdir .tmp/wrangler-functional-staging-dry-run && wrangler deploy --config apps/marketing/wrangler.jsonc --env staging --dry-run --outdir .tmp/wrangler-marketing-staging-dry-run",
+    "test:reliability": "vitest run apps/worker/src/capability-reliability.test.ts apps/worker/src/staging-reliability-core.test.ts scripts/delivery/staging-provider-v2.test.mjs scripts/delivery/public-provider.test.mjs && pnpm test:worker-runtime",
     "provenance:check": "node scripts/publication/verify.mjs provenance"
   },
   "devDependencies": {

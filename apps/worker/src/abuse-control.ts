@@ -1,15 +1,16 @@
 import { z } from "zod";
 import type { WorkerEnv } from "./env";
 
-export type ExactIpQuotaKind = "preparation" | "passive" | "reveal";
-export type TurnstileAction = "onceurl_prepare" | "onceurl_access_code";
+export type ExactIpQuotaKind =
+  "preparation" | "passive" | "reveal" | "report_issue" | "report_submit";
+export type TurnstileAction = "onceurl_prepare" | "onceurl_access_code" | "onceurl_report_submit";
 
 const ABUSE_DIGEST_DOMAIN = "onceurl.abuse-ip-digest.v1\u0000";
 const CHALLENGE_DIGEST_DOMAIN = "onceurl.challenge-digest.v1\u0000";
 const CHALLENGE_TICKET_DOMAIN = "onceurl.challenge-ticket.v2\u0000";
 const CHALLENGE_LIFETIME_MS = 5 * 60 * 1_000;
 const canonicalKeyPattern = /^[A-Za-z0-9_-]{43}$/u;
-const challengeIdPattern = /^chl2_([pa])_(\d{1,16})_([A-Za-z0-9_-]{22})_([A-Za-z0-9_-]{43})$/u;
+const challengeIdPattern = /^chl2_([par])_(\d{1,16})_([A-Za-z0-9_-]{22})_([A-Za-z0-9_-]{43})$/u;
 
 const abuseControlResultSchema = z.union([
   z.strictObject({ ok: z.literal(true) }),
@@ -149,7 +150,8 @@ export async function createChallengeTicket(
     throw new AbuseControlConfigurationError();
   }
   const keys = await importHmacKeys(env);
-  const actionCode = action === "onceurl_prepare" ? "p" : "a";
+  const actionCode =
+    action === "onceurl_prepare" ? "p" : action === "onceurl_access_code" ? "a" : "r";
   const nonce = base64urlEncode(crypto.getRandomValues(new Uint8Array(16)));
   const unsigned = `chl2_${actionCode}_${now}_${nonce}`;
   const signature = await hmacDigest(keys.current, CHALLENGE_TICKET_DOMAIN, unsigned, "");
@@ -259,7 +261,8 @@ async function parseChallengeTicket(
   if (match === null || !Number.isSafeInteger(now) || now < 0) return null;
   const [, actionCode, createdAtText, nonce, signatureText] = match;
   if (
-    actionCode !== (action === "onceurl_prepare" ? "p" : "a") ||
+    actionCode !==
+      (action === "onceurl_prepare" ? "p" : action === "onceurl_access_code" ? "a" : "r") ||
     createdAtText === undefined ||
     nonce === undefined ||
     signatureText === undefined ||

@@ -8,6 +8,8 @@ import {
 } from "@onceurl/shared";
 import { z } from "zod";
 import type { WorkerEnv } from "./env";
+import { observedRoute, observeResponse } from "./metrics-observations";
+import { mountAdminReportRoutes } from "./admin-report-routes";
 import {
   AbuseControlConfigurationError,
   AbuseControlDependencyError,
@@ -66,11 +68,17 @@ const claimRequestSchema = z.strictObject({
     .optional()
 });
 
-const turnstileActionSchema = z.enum(["onceurl_prepare", "onceurl_access_code"]);
+const turnstileActionSchema = z.enum([
+  "onceurl_prepare",
+  "onceurl_access_code",
+  "onceurl_report_submit"
+]);
 const challengeIdSchema = z
   .string()
-  .regex(/^chl2_[pa]_\d{1,16}_[A-Za-z0-9_-]{22}_[A-Za-z0-9_-]{43}$/u);
-const challengeCreateSchema = z.strictObject({ action: z.literal("onceurl_prepare") });
+  .regex(/^chl2_[par]_\d{1,16}_[A-Za-z0-9_-]{22}_[A-Za-z0-9_-]{43}$/u);
+const challengeCreateSchema = z.strictObject({
+  action: z.enum(["onceurl_prepare", "onceurl_report_submit"])
+});
 const challengeStateSchema = z.strictObject({
   challenge_id: challengeIdSchema,
   action: turnstileActionSchema
@@ -183,6 +191,8 @@ function createApp(options: { includeTestRoutes?: boolean } = {}) {
     switch (routeClass) {
       case "api":
         return "/api/*";
+      case "admin":
+        return "/internal/admin/*";
       case "asset":
         return "/assets/*";
       case "boundary":
@@ -197,12 +207,28 @@ function createApp(options: { includeTestRoutes?: boolean } = {}) {
   }
 
   app.use("*", async (context, next) => {
+    const route = observedRoute(new URL(context.req.url).pathname, context.req.method);
+    const startedAt = Date.now();
     await next();
     context.res = new Response(context.res.body, context.res);
     applyFunctionalRoutePolicy(
       context.res,
       classifyFunctionalRoute(new URL(context.req.url).pathname)
     );
+    if (route !== null) {
+      const observation = observeResponse(
+        context.env,
+        route,
+        context.res.status,
+        startedAt,
+        Date.now()
+      );
+      try {
+        context.executionCtx.waitUntil(observation);
+      } catch {
+        await observation;
+      }
+    }
   });
 
   app.use("*", async (context, next) => {
@@ -613,6 +639,8 @@ function createApp(options: { includeTestRoutes?: boolean } = {}) {
     });
   });
 
+  mountAdminReportRoutes(app);
+
   if (options.includeTestRoutes === true) {
     app.get("/api/v1/test/unhandled-error", () => {
       throw new Error("sensitive internal exception detail");
@@ -633,11 +661,13 @@ function createApp(options: { includeTestRoutes?: boolean } = {}) {
     });
 
     const response =
-      routeClass === "api"
-        ? apiErrorResponse(context, "internal_error", 500)
-        : routeClass === "capability"
-          ? apiErrorResponse(context, "internal_error", 503)
-          : new Response("Internal server error", { status: 500 });
+      routeClass === "admin" || context.req.path.startsWith("/api/v1/reports")
+        ? Response.json({ error: "service_unavailable" }, { status: 503 })
+        : routeClass === "api"
+          ? apiErrorResponse(context, "internal_error", 500)
+          : routeClass === "capability"
+            ? apiErrorResponse(context, "internal_error", 503)
+            : new Response("Internal server error", { status: 500 });
     response.headers.set("X-Request-ID", requestId);
     return response;
   });
@@ -650,7 +680,12 @@ function createApp(options: { includeTestRoutes?: boolean } = {}) {
       return apiErrorResponse(context, "not_found", 404);
     }
 
-    if (routeClass === "boundary" || routeClass === "capability" || routeClass === "challenge") {
+    if (
+      routeClass === "admin" ||
+      routeClass === "boundary" ||
+      routeClass === "capability" ||
+      routeClass === "challenge"
+    ) {
       return new Response("Not found", { status: 404 });
     }
 

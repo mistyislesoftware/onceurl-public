@@ -142,6 +142,25 @@ afterAll(async () => {
 });
 
 describe("common-origin platform routing", () => {
+  it("keeps the complete admin namespace unavailable with unprovisioned Access trust", async () => {
+    for (const path of [
+      "/internal/admin",
+      "/internal/admin/client.js",
+      "/internal/admin/inspect",
+      "/internal/admin/unknown"
+    ]) {
+      const response = await fetch(`${origin}${path}`, {
+        headers: {
+          Cookie: "CF_Authorization=synthetic-cookie",
+          "Cf-Access-Authenticated-User-Email": "operator@onceurl.invalid"
+        }
+      });
+      expect(response.status).toBe(503);
+      expect(response.headers.get("cache-control")).toBe("private, no-store");
+      expect(response.headers.get("x-robots-tag")).toBe("noindex, nofollow, noarchive");
+      expect(await response.text()).not.toContain("synthetic-cookie");
+    }
+  });
   it("returns HTTP 200 JSON from /api/v1/health", async () => {
     const response = await fetch(`${origin}/api/v1/health`);
 

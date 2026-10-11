@@ -5,6 +5,81 @@ const marketingHealthUrl = "http://127.0.0.2:8790/_marketing/health";
 const browserTestPreparationKey = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE";
 const challengeId = `chl2_p_1_${"A".repeat(22)}_${"A".repeat(43)}`;
 
+test("report UI keeps hostile notes inert, enforces UTF-8 bounds and isolates the challenge", async ({
+  page,
+  request
+}) => {
+  const secret = await createSecret(page, "report-browser-secret");
+  const reportRequests: Request[] = [];
+  page.on("request", (value) => {
+    if (value.url().includes("/api/v1/reports")) reportRequests.push(value);
+  });
+  await page.goto(secret.recipientUrl);
+  expect(reportRequests).toHaveLength(0);
+  await page.getByRole("button", { name: "Report abuse", exact: true }).click();
+  await page.getByLabel("Optional note").fill("😀".repeat(257));
+  await expect(page.getByRole("button", { name: "Begin report security check" })).toBeDisabled();
+  const hostile =
+    '<img src=x onerror="window.reportInjected=true"><script>window.reportInjected=true</script>';
+  await page.getByLabel("Optional note").fill(hostile);
+  await expect(page.locator('img[src="x"]')).toHaveCount(0);
+  expect(await page.evaluate(() => Reflect.get(window, "reportInjected") === undefined)).toBe(true);
+  const reportChallenge = `chl2_r_1_${"B".repeat(22)}_${"B".repeat(43)}`;
+  await page.route("**/api/v1/challenges", async (route) => {
+    expect(JSON.parse(route.request().postData() ?? "{}")).toEqual({
+      action: "onceurl_report_submit"
+    });
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ challenge_id: reportChallenge, expires_in_seconds: 300 })
+    });
+  });
+  await page.route("**/api/v1/reports", async (route) => {
+    const body: unknown = JSON.parse(route.request().postData() ?? "{}");
+    if (typeof body !== "object" || body === null || !("note" in body) || !("nonce" in body))
+      throw new Error("Expected a bounded report request");
+    expect(Object.keys(body).sort()).toEqual(["nonce", "note", "reason"]);
+    expect(body.note).toBe(hostile);
+    expect(body.nonce).toMatch(/^rpt1_[A-Za-z0-9_-]{43}$/u);
+    expect(route.request().headers()["x-onceurl-challenge"]).toBe(reportChallenge);
+    expect(route.request().postData()).not.toContain(new URL(secret.recipientUrl).hash);
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ acknowledged: true })
+    });
+  });
+  await page.getByRole("button", { name: "Begin report security check" }).click();
+  const isolated = page.getByRole("link", { name: "Open report security check" });
+  await expect(isolated).toHaveAttribute("rel", "noopener noreferrer");
+  const challengeTarget = await isolated.getAttribute("href");
+  expect(challengeTarget).toContain("/challenge#c=chl2_r_");
+  expect(challengeTarget).not.toContain(new URL(secret.recipientUrl).pathname);
+  await page.getByRole("button", { name: "Send report", exact: true }).click();
+  await expect(
+    page.getByText("Thank you. The report has been acknowledged.", { exact: false })
+  ).toBeVisible();
+  const inspection = await request.get(new URL(secret.recipientUrl).pathname);
+  const inspectionBody: unknown = await inspection.json();
+  expect(inspectionBody).toMatchObject({ capability: { is_available: true } });
+});
+
+test("unprovisioned admin routes fail closed in the real browser service", async ({ request }) => {
+  for (const path of [
+    "/internal/admin",
+    "/internal/admin/client.js",
+    "/internal/admin/action",
+    "/internal/admin/unknown"
+  ]) {
+    const response = await request.get(path, {
+      headers: { Cookie: "CF_Authorization=synthetic-cookie" }
+    });
+    expect(response.status()).toBe(503);
+    expect(response.headers()["cache-control"]).toBe("private, no-store");
+    expect(response.headers()["x-robots-tag"]).toBe("noindex, nofollow, noarchive");
+    expect(await response.text()).not.toContain("synthetic-cookie");
+  }
+});
+
 interface CreatedSecret {
   readonly recipientUrl: string;
   readonly ownerUrl: string;

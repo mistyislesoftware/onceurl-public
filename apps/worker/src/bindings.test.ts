@@ -9,6 +9,32 @@ const configPath = join(rootDirectory, "apps", "worker", "wrangler.jsonc");
 const generatedTypesPath = join(rootDirectory, "apps", "worker", "worker-configuration.d.ts");
 
 describe("Cloudflare binding configuration", () => {
+  it("confines the reliability Workflow and provenance bindings to staging", () => {
+    const config = JSON.parse(readFileSync(configPath, "utf8")) as {
+      workflows: unknown[];
+      version_metadata?: unknown;
+      env: {
+        preview: { workflows: unknown[]; version_metadata?: unknown };
+        staging: { workflows: unknown[]; version_metadata: unknown; vars: Record<string, string> };
+      };
+    };
+    expect(config.workflows).toEqual([]);
+    expect(config.env.preview.workflows).toEqual([]);
+    expect(config.version_metadata).toBeUndefined();
+    expect(config.env.preview.version_metadata).toBeUndefined();
+    expect(config.env.staging.workflows).toEqual([
+      {
+        binding: "STAGING_RELIABILITY",
+        name: "onceurl-staging-reliability",
+        class_name: "StagingReliabilityWorkflow",
+        limits: { steps: 256 }
+      }
+    ]);
+    expect(config.env.staging.version_metadata).toEqual({ binding: "CF_VERSION_METADATA" });
+    for (const [key, value] of Object.entries(config.env.staging.vars))
+      if (key.startsWith("STAGING_")) expect(value).toBe("unconfigured");
+    expect(readFileSync(configPath, "utf8")).not.toContain("STAGING_RELIABILITY_HMAC_KEY");
+  });
   it("parses the canonical Wrangler JSONC configuration", () => {
     expect((): unknown => JSON.parse(readFileSync(configPath, "utf8"))).not.toThrow();
   });

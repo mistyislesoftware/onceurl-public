@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { z } from "zod";
 import type { WorkerEnv } from "./env";
+import { cleanupSecurityTicket, executeSecurityTicket } from "./security-tickets";
 
 const QUOTA_RECORD_KEY = "abuse:v1:quota";
 const QUOTA_HANDOFF_KEY = "abuse:v1:quota-handoff";
@@ -14,18 +15,18 @@ const handoffId = z.string().regex(/^hof1_[A-Za-z0-9_-]{43}$/u);
 const epochMilliseconds = z.number().refine((value) => Number.isSafeInteger(value) && value >= 0);
 
 const quotaCommandSchema = z.strictObject({
-  kind: z.enum(["preparation", "passive", "reveal"]),
+  kind: z.enum(["preparation", "passive", "reveal", "report_issue", "report_submit"]),
   now: epochMilliseconds
 });
 
 const challengeCreateVerifiedSchema = z.strictObject({
-  action: z.enum(["onceurl_prepare", "onceurl_access_code"]),
+  action: z.enum(["onceurl_prepare", "onceurl_access_code", "onceurl_report_submit"]),
   createdAt: epochMilliseconds,
   now: epochMilliseconds
 });
 
 const challengeStateCommandSchema = z.strictObject({
-  action: z.enum(["onceurl_prepare", "onceurl_access_code"]),
+  action: z.enum(["onceurl_prepare", "onceurl_access_code", "onceurl_report_submit"]),
   now: epochMilliseconds
 });
 
@@ -33,7 +34,9 @@ const quotaRecordSchema = z.strictObject({
   schemaVersion: z.literal(1),
   preparation: z.array(epochMilliseconds).max(60),
   passive: z.array(epochMilliseconds).max(120),
-  reveal: z.array(epochMilliseconds).max(30)
+  reveal: z.array(epochMilliseconds).max(30),
+  report_issue: z.array(epochMilliseconds).max(5).default([]),
+  report_submit: z.array(epochMilliseconds).max(5).default([])
 });
 
 const quotaHandoffCommandSchema = z.strictObject({
@@ -70,7 +73,7 @@ const acceptedHandoffRecordSchema = z.strictObject({
 
 const challengeRecordSchema = z.strictObject({
   schemaVersion: z.literal(1),
-  action: z.enum(["onceurl_prepare", "onceurl_access_code"]),
+  action: z.enum(["onceurl_prepare", "onceurl_access_code", "onceurl_report_submit"]),
   createdAt: epochMilliseconds,
   expiresAt: epochMilliseconds,
   verifiedAt: epochMilliseconds,
@@ -95,6 +98,17 @@ type AbuseControlResult =
 export class AbuseControlDurableObject extends DurableObject<WorkerEnv> {
   override async fetch(request: Request): Promise<Response> {
     const pathname = new URL(request.url).pathname;
+    if (pathname === "/internal/security/ticket") {
+      if (request.method !== "POST") return jsonResponse({ ok: false }, 405);
+      try {
+        return jsonResponse(
+          await executeSecurityTicket(this.ctx.storage, await request.json()),
+          200
+        );
+      } catch {
+        return jsonResponse({ ok: false }, 503);
+      }
+    }
     if (
       ![
         "/internal/abuse/quota",
@@ -127,6 +141,7 @@ export class AbuseControlDurableObject extends DurableObject<WorkerEnv> {
   }
 
   override async alarm(): Promise<void> {
+    if (await cleanupSecurityTicket(this.ctx.storage, Date.now())) return;
     const storedQuota = await this.ctx.storage.get(QUOTA_RECORD_KEY);
     const storedHandoff = await this.ctx.storage.get(QUOTA_HANDOFF_KEY);
     const storedAcceptedHandoff = await this.ctx.storage.get(ACCEPTED_HANDOFF_KEY);
@@ -468,7 +483,14 @@ export class AbuseControlDurableObject extends DurableObject<WorkerEnv> {
 }
 
 function emptyQuotaRecord(): QuotaRecord {
-  return { schemaVersion: 1, preparation: [], passive: [], reveal: [] };
+  return {
+    schemaVersion: 1,
+    preparation: [],
+    passive: [],
+    reveal: [],
+    report_issue: [],
+    report_submit: []
+  };
 }
 
 function parseQuotaRecord(value: unknown): QuotaRecord | null {
@@ -528,7 +550,9 @@ function pruneQuotaRecord(record: QuotaRecord, now: number): QuotaRecord {
     schemaVersion: 1,
     preparation: record.preparation.filter((at) => at > now - MAX_STATE_LIFETIME_MS && at <= now),
     passive: record.passive.filter((at) => at > now - 60_000 && at <= now),
-    reveal: record.reveal.filter((at) => at > now - 60_000 && at <= now)
+    reveal: record.reveal.filter((at) => at > now - 60_000 && at <= now),
+    report_issue: record.report_issue.filter((at) => at > now - 60_000 && at <= now),
+    report_submit: record.report_submit.filter((at) => at > now - 3_600_000 && at <= now)
   };
 }
 
@@ -545,7 +569,11 @@ function quotaRetryAfter(record: QuotaRecord, kind: QuotaKind, now: number): num
         ]
       : kind === "passive"
         ? [{ events: record.passive, limit: 120, window: 60_000 }]
-        : [{ events: record.reveal, limit: 30, window: 60_000 }];
+        : kind === "reveal"
+          ? [{ events: record.reveal, limit: 30, window: 60_000 }]
+          : kind === "report_issue"
+            ? [{ events: record.report_issue, limit: 5, window: 60_000 }]
+            : [{ events: record.report_submit, limit: 5, window: 3_600_000 }];
 
   let retryAfter = 0;
   for (const window of windows) {
@@ -560,7 +588,13 @@ function quotaRetryAfter(record: QuotaRecord, kind: QuotaKind, now: number): num
 }
 
 function latestEvent(record: QuotaRecord): number | null {
-  const events = [...record.preparation, ...record.passive, ...record.reveal];
+  const events = [
+    ...record.preparation,
+    ...record.passive,
+    ...record.reveal,
+    ...record.report_issue,
+    ...record.report_submit
+  ];
   return events.length === 0 ? null : Math.max(...events);
 }
 

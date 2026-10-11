@@ -163,7 +163,9 @@ async function stopWorker(worker) {
 
   worker.child.kill("SIGTERM");
   await Promise.race([
-    new Promise((resolvePromise) => worker.child.once("exit", resolvePromise)),
+    // close follows exit only after inherited stdio handles are released by
+    // workerd too; deleting SQLite persistence at exit races those handles.
+    new Promise((resolvePromise) => worker.child.once("close", resolvePromise)),
     new Promise((resolvePromise) =>
       setTimeout(() => {
         if (worker.child.exitCode === null) {
@@ -228,7 +230,7 @@ export async function runLocalDevelopment(options = {}) {
   );
 
   if (checkOnly) {
-    await rm(stateDirectory, { recursive: true, force: true });
+    await rm(stateDirectory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
   await mkdir(logDirectory, { recursive: true });
   if (environmentFile !== null) {
@@ -287,7 +289,9 @@ export async function runLocalDevelopment(options = {}) {
       await rm(environmentFile, { force: true });
     }
     if (checkOnly) {
-      await rm(stateDirectory, { recursive: true, force: true });
+      // Windows releases SQLite directory locks after process teardown. Retry
+      // only the same verified repository-owned removal, with a 5.5s bound.
+      await rm(stateDirectory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
   }
 }
