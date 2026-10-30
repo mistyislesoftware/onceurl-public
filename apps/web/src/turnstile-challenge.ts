@@ -1,13 +1,15 @@
-export type ChallengeAction = "onceurl_prepare" | "onceurl_access_code";
+export type ChallengeAction = "onceurl_prepare" | "onceurl_access_code" | "onceurl_report_submit";
 
 export interface ChallengeTicket {
   readonly id: string;
   readonly action: ChallengeAction;
 }
 
-const challengeTicketPattern = /^chl2_[pa]_\d{1,16}_[A-Za-z0-9_-]{22}_[A-Za-z0-9_-]{43}$/u;
+const challengeTicketPattern = /^chl2_[par]_\d{1,16}_[A-Za-z0-9_-]{22}_[A-Za-z0-9_-]{43}$/u;
 
-export async function requestChallenge(action: "onceurl_prepare"): Promise<ChallengeTicket> {
+export async function requestChallenge(
+  action: "onceurl_prepare" | "onceurl_report_submit"
+): Promise<ChallengeTicket> {
   const response = await fetch("/api/v1/challenges", {
     method: "POST",
     headers: { "content-type": "application/json" },

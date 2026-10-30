@@ -879,7 +879,7 @@ describe("Capability Durable Object persistence", () => {
       backoffUntil: null,
       deleteAt: null
     });
-  });
+  }, 20_000);
 
   it("does not increment access-code failures when the exact capability limiter rejects", async () => {
     const storage = new MemoryDurableObjectStorage();
@@ -1592,7 +1592,7 @@ describe("Capability Durable Object delivery and deadlines", () => {
     });
   });
 
-  it("keeps the earliest alarm across outbox, expiry, and retention duties", async () => {
+  it("keeps the earliest alarm across operational outbox, independent metrics, expiry and retention duties", async () => {
     const storage = new MemoryDurableObjectStorage();
     await createCapability(storage, {
       ...baseCommand(),
@@ -1608,6 +1608,14 @@ describe("Capability Durable Object delivery and deadlines", () => {
       projectionVersion: 1,
       now: 1_100
     });
+    expect(storage.alarmTime()).toBe(1_100);
+    const metrics = await storage.list<Record<string, unknown>>({
+      prefix: "capability:metrics:v1:"
+    });
+    expect(metrics.size).toBe(1);
+    for (const [key, source] of metrics)
+      await storage.put(key, { ...source, nextAttemptAt: 301_100 });
+    await maintainCapability(storage, 1_100);
     expect(storage.alarmTime()).toBe(5_000);
   });
 

@@ -20,6 +20,7 @@ import {
   parseFragmentKey
 } from "./zero-knowledge";
 import { ACCESS_CODE_MAX_BYTES } from "./access-code";
+import { ReportForm } from "./ReportForm";
 import {
   accessCodeChallengeFromDetails,
   challengeIsVerified,
@@ -674,6 +675,7 @@ function RecipientPage() {
 
   return (
     <PageShell eyebrow="One-time secret" title="Reveal is a final action">
+      <ReportForm />
       <p className="lede">
         Opening this page did not consume the secret. Reveal only when you are ready to read and
         securely handle it.

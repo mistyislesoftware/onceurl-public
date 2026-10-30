@@ -17,6 +17,23 @@ import {
   type CapabilityAuthority
 } from "./capability-authority";
 import { parseAccessCodeVerifier, verifyAccessCode, type AccessCodeVerifier } from "./access-code";
+import { securityDigest } from "./admin-auth";
+import { METRIC_EVENT_RETENTION, METRIC_HOUR } from "./phase1a-metrics";
+import {
+  adminMutationSchema,
+  confirmReport,
+  epochSchema,
+  locatorSchema,
+  maintainSecurityRecords,
+  reportIdSchema,
+  REPORT_REASONS,
+  SECURITY_RECORD_PREFIX,
+  securityRecordSchema,
+  storeAudit,
+  storeReport
+} from "./abuse-records";
+
+import { storeLifecycleMetric } from "./security-metrics-outbox";
 
 const RECORD_SCHEMA_VERSION = 3;
 const ACCESS_CODE_RECORD_SCHEMA_VERSION = 2;
@@ -131,6 +148,14 @@ const reconcileCapabilityCommandSchema = z.strictObject({
   terminalEvidence: terminalEvidenceSchema.nullable().optional()
 });
 
+const failClosedUncertainRestoreCommandSchema = z.strictObject({
+  operationId: boundedOpaqueString,
+  capabilityId: boundedOpaqueString,
+  locator: capabilityLocator,
+  decision: z.literal("delete_uncertain_restored_state"),
+  now: epochMilliseconds
+});
+
 const outboxDeliveryCommandSchema = z.strictObject({
   eventId: boundedOpaqueString,
   now: epochMilliseconds
@@ -160,6 +185,7 @@ const projectionTransitionSchema = z.strictObject({
 });
 
 const capabilityProjectionMessageSchema = z.strictObject({
+  metricEventId: z.uuid().optional(),
   schemaVersion: z.literal(1),
   job: z.literal("capability_projection"),
   deliveryEventId: boundedOpaqueString.nullable(),
@@ -265,7 +291,8 @@ const accessCodeStateSchema = z.strictObject({
   failureCount: z.number().int().min(0).max(10),
   challengeRequired: z.boolean(),
   backoffUntil: positiveEpochMilliseconds.nullable(),
-  deleteAt: positiveEpochMilliseconds.nullable()
+  deleteAt: positiveEpochMilliseconds.nullable(),
+  lockSource: z.literal("operator").optional()
 });
 
 export interface CapabilityObjectTransaction {
@@ -288,6 +315,9 @@ export type AuthorizeCapabilityCommand = z.infer<typeof authorizeCapabilityComma
 export type DecideAbuseLockCommand = z.infer<typeof decideAbuseLockCommandSchema>;
 export type DeleteCapabilityCommand = z.infer<typeof deleteCapabilityCommandSchema>;
 export type ReconcileCapabilityCommand = z.infer<typeof reconcileCapabilityCommandSchema>;
+export type FailClosedUncertainRestoreCommand = z.infer<
+  typeof failClosedUncertainRestoreCommandSchema
+>;
 
 type EnvelopeValidationContext = Pick<
   CreateCapabilityCommand,
@@ -330,6 +360,19 @@ export type ReconcileCapabilityResult =
       readonly nextDueAt: number | null;
     }
   | { readonly ok: false; readonly code: "invalid_command" | "not_found" | "malformed_state" };
+
+export type FailClosedUncertainRestoreResult =
+  | {
+      readonly ok: true;
+      readonly state: "DELETED";
+      readonly projectionVersion: number;
+      readonly ciphertextPresent: false;
+    }
+  | {
+      readonly ok: false;
+      readonly code:
+        "invalid_command" | "not_found" | "event_conflict" | "unavailable" | "malformed_state";
+    };
 
 export type AuthorizeCapabilityResult =
   | {
@@ -411,6 +454,7 @@ interface RateRecordV1 {
 }
 
 interface AccessCodeStateV1 {
+  readonly lockSource?: "operator";
   readonly schemaVersion: 1;
   readonly failureCount: number;
   readonly challengeRequired: boolean;
@@ -419,6 +463,7 @@ interface AccessCodeStateV1 {
 }
 
 interface OutboxRecordBase {
+  readonly metricEventId?: string;
   readonly eventId: string;
   readonly event: CapabilityDomainEvent;
   readonly recordedAt: number;
@@ -443,6 +488,7 @@ interface OutboxRecord extends OutboxRecordBase {
 type ParsedOutboxRecord = LegacyOutboxRecord | OutboxRecord;
 
 export interface CapabilityProjectionMessage {
+  readonly metricEventId?: string;
   readonly schemaVersion: 1;
   readonly job: "capability_projection";
   readonly deliveryEventId: string | null;
@@ -1073,6 +1119,11 @@ export async function acknowledgeOutboxDelivery(
       return { ok: false, code: "malformed_state" };
     }
     if (outbox.status === "delivered") return { ok: true, retained: true };
+    await storeLifecycleMetric(
+      txn,
+      buildOutboxProjectionMessage(projectionState.record, outbox),
+      now
+    );
     await txn.put(key, {
       ...outbox,
       schemaVersion: OUTBOX_SCHEMA_VERSION,
@@ -1203,6 +1254,14 @@ export async function maintainCapability(
       if (outbox !== null && now >= outbox.retentionEligibleAt) {
         await txn.delete(key);
         storedOutboxes.delete(key);
+      } else if (
+        outbox?.metricEventId !== undefined &&
+        now >= Math.floor(outbox.recordedAt / METRIC_HOUR) * METRIC_HOUR + METRIC_EVENT_RETENTION
+      ) {
+        const minimized = { ...outbox };
+        delete minimized.metricEventId;
+        await txn.put(key, minimized);
+        storedOutboxes.set(key, minimized);
       }
     }
     await setNextAlarm(txn, record, accessState, storedOutboxes, now);
@@ -1247,6 +1306,96 @@ export async function reconcileCapability(
         projectionState.outboxes,
         command.now
       )
+    };
+  });
+}
+
+/**
+ * Applies an explicit fail-closed operator decision while the external
+ * quarantine prevents the restored object from serving traffic. This is
+ * deliberately separate from ordinary reconciliation: absence of terminal
+ * evidence is not itself proof that a current ACTIVE object is unsafe.
+ */
+export async function failClosedUncertainRestore(
+  storage: CapabilityObjectStorage,
+  input: unknown
+): Promise<FailClosedUncertainRestoreResult> {
+  const commandResult = failClosedUncertainRestoreCommandSchema.safeParse(input);
+  if (!commandResult.success) return { ok: false, code: "invalid_command" };
+  const command = commandResult.data;
+  const at = parseEpochMilliseconds(command.now);
+  if (!at.ok) return { ok: false, code: "invalid_command" };
+
+  return storage.transaction(async (txn) => {
+    const stored = await txn.get(RECORD_KEY);
+    if (stored === undefined) return { ok: false, code: "not_found" };
+    let record = parsePersistedRecord(stored);
+    if (record === null) return { ok: false, code: "malformed_state" };
+    if (record.capabilityId !== command.capabilityId || record.locator !== command.locator) {
+      return { ok: false, code: "not_found" };
+    }
+    const accessState = parseAccessCodeState(await txn.get(ACCESS_CODE_STATE_KEY));
+    if (accessState === null || !accessStateMatchesRecord(record, accessState)) {
+      return { ok: false, code: "malformed_state" };
+    }
+    const projectionState = await normalizeProjectionState(
+      txn,
+      record,
+      await txn.list({ prefix: OUTBOX_PREFIX })
+    );
+    if (projectionState === null) return { ok: false, code: "malformed_state" };
+    record = projectionState.record;
+
+    if (record.lifecycle.state === "DELETED") {
+      return {
+        ok: true,
+        state: "DELETED",
+        projectionVersion: record.projectionVersion,
+        ciphertextPresent: false
+      };
+    }
+
+    const transition =
+      record.lifecycle.state === "ABUSE_LOCKED"
+        ? transitionCapability(record.lifecycle, record.policy, {
+            type: "decide_abuse_lock",
+            commandId: command.operationId,
+            privilegedDecisionId: "system:uncertain-restore-quarantine",
+            decision: "delete",
+            at: at.value
+          })
+        : transitionCapability(record.lifecycle, record.policy, {
+            type: "delete",
+            commandId: command.operationId,
+            at: at.value
+          });
+    if (!transition.ok) return { ok: false, code: failureCode(transition.error) };
+
+    const outboxKey = `${OUTBOX_PREFIX}${transition.value.event.eventId}`;
+    if ((await txn.get(outboxKey)) !== undefined) {
+      return { ok: false, code: "event_conflict" };
+    }
+    const projectionVersion = record.projectionVersion + 1;
+    const nextRecord: CapabilityRecord = {
+      ...record,
+      schemaVersion: RECORD_SCHEMA_VERSION,
+      lifecycle: transition.value.lifecycle,
+      ciphertextEnvelope: null,
+      projectionVersion,
+      lastTransition: projectionTransition(transition.value.event)
+    };
+    await txn.put(RECORD_KEY, nextRecord);
+    await txn.put(ACCESS_CODE_STATE_KEY, emptyAccessCodeState());
+    await txn.put(
+      outboxKey,
+      outboxRecord(transition.value.event, command.now, projectionVersion, false)
+    );
+    await scheduleAlarmAtOrBefore(txn, command.now);
+    return {
+      ok: true,
+      state: "DELETED",
+      projectionVersion: nextRecord.projectionVersion,
+      ciphertextPresent: false
     };
   });
 }
@@ -1409,7 +1558,7 @@ async function applyFailClosedTerminalEvidence(
     lastTransition: projectionTransition(event)
   };
   await txn.put(RECORD_KEY, next);
-  await txn.put(outboxKey, outboxRecord(event, now, next.projectionVersion));
+  await txn.put(outboxKey, outboxRecord(event, now, next.projectionVersion, false));
   await txn.put(ACCESS_CODE_STATE_KEY, emptyAccessCodeState());
   return next;
 }
@@ -1432,7 +1581,7 @@ function buildOutboxProjectionMessage(
   outbox: OutboxRecord
 ): CapabilityProjectionMessage {
   const transition = projectionTransition(outbox.event);
-  return buildProjectionMessage(
+  const message = buildProjectionMessage(
     record,
     transition,
     outbox.projectionVersion,
@@ -1441,6 +1590,9 @@ function buildOutboxProjectionMessage(
       ? unresolvedAccessLockDeleteAt(record.policy, transition.occurredAt)
       : null
   );
+  return outbox.metricEventId === undefined
+    ? message
+    : { ...message, metricEventId: outbox.metricEventId };
 }
 
 function buildProjectionMessage(
@@ -1499,7 +1651,14 @@ async function setNextAlarm(
   outboxes: Map<string, unknown>,
   now: number
 ): Promise<void> {
-  const nextDue = calculateNextDue(record, accessState, outboxes, now);
+  const lifecycleDue = calculateNextDue(record, accessState, outboxes, now);
+  const securityDue = await maintainSecurityRecords(txn, now);
+  const nextDue =
+    lifecycleDue === null
+      ? securityDue
+      : securityDue === null
+        ? lifecycleDue
+        : Math.min(lifecycleDue, securityDue);
   if (nextDue === null) {
     await txn.deleteAlarm();
   } else {
@@ -1531,6 +1690,10 @@ function calculateNextDue(
       continue;
     }
     duties.push(outbox.retentionEligibleAt);
+    if (outbox.metricEventId !== undefined)
+      duties.push(
+        Math.floor(outbox.recordedAt / METRIC_HOUR) * METRIC_HOUR + METRIC_EVENT_RETENTION
+      );
     if (outbox.status !== "delivered" && outbox.nextAttemptAt !== null) {
       duties.push(outbox.nextAttemptAt);
     }
@@ -1577,6 +1740,15 @@ function parseAccessCodeState(value: unknown): AccessCodeStateV1 | null {
   const parsed = accessCodeStateSchema.safeParse(value);
   if (!parsed.success) return null;
   const { failureCount, challengeRequired, backoffUntil, deleteAt } = parsed.data;
+  if (parsed.data.lockSource === "operator") {
+    if (deleteAt === null || failureCount === 10) return null;
+    const baseline = parseAccessCodeState({
+      ...parsed.data,
+      lockSource: undefined,
+      deleteAt: null
+    });
+    return baseline === null ? null : parsed.data;
+  }
   const exactCombination =
     failureCount <= 2
       ? !challengeRequired && backoffUntil === null && deleteAt === null
@@ -1593,6 +1765,7 @@ function accessStateMatchesRecord(
   record: CapabilityRecord,
   accessState: AccessCodeStateV1
 ): boolean {
+  if (accessState.lockSource === "operator") return record.lifecycle.state === "ABUSE_LOCKED";
   if (record.accessCodeVerifier === null) {
     return accessState.failureCount === 0;
   }
@@ -1627,9 +1800,12 @@ function unresolvedAccessLockDeleteAt(policy: CapabilityPolicy, lockedAt: number
 function outboxRecord(
   event: CapabilityDomainEvent,
   recordedAt: number,
-  projectionVersion: number
+  projectionVersion: number,
+  productMetric = true
 ): OutboxRecord {
   return {
+    // Restoration repairs are operational evidence, not new product actions.
+    ...(productMetric ? { metricEventId: crypto.randomUUID() } : {}),
     schemaVersion: OUTBOX_SCHEMA_VERSION,
     eventId: event.eventId,
     event,
@@ -1753,6 +1929,7 @@ function parseStoredOutbox(value: unknown): ParsedOutboxRecord | null {
 
   if (
     value.schemaVersion !== OUTBOX_SCHEMA_VERSION ||
+    (value.metricEventId !== undefined && !z.uuid().safeParse(value.metricEventId).success) ||
     !hasExactKeys(value, [
       "schemaVersion",
       "eventId",
@@ -1764,7 +1941,8 @@ function parseStoredOutbox(value: unknown): ParsedOutboxRecord | null {
       "lastAttemptedAt",
       "nextAttemptAt",
       "deliveredAt",
-      "retentionEligibleAt"
+      "retentionEligibleAt",
+      ...(value.metricEventId === undefined ? [] : ["metricEventId"])
     ]) ||
     typeof value.projectionVersion !== "number" ||
     !Number.isSafeInteger(value.projectionVersion) ||
@@ -2303,4 +2481,249 @@ function opaqueValuesEqual(left: string, right: string): boolean {
 
 function failureCode(error: CapabilityTransitionError): "malformed_state" | "unavailable" {
   return error.code === "invalid_count" ? "malformed_state" : "unavailable";
+}
+
+export type AbuseCommandResult =
+  | { readonly ok: true; readonly authorized?: boolean; readonly metadata?: unknown }
+  | {
+      readonly ok: false;
+      readonly code:
+        | "invalid_command"
+        | "not_found"
+        | "malformed_state"
+        | "unavailable"
+        | "event_conflict"
+        | "rate_limited";
+      readonly retryAfter?: number;
+    };
+
+async function reportQuota(
+  txn: CapabilityObjectTransaction,
+  kind: "issue" | "submit",
+  now: number
+): Promise<number | null> {
+  const key = `capability:security:rate:${kind}`;
+  const stored = await txn.get(key);
+  const values = stored === undefined ? [] : z.array(epochSchema).max(3).parse(stored);
+  if (values.some((at, index) => at > now || (index > 0 && at < (values[index - 1] ?? 0))))
+    throw new Error("Invalid report quota state");
+  const window = kind === "issue" ? 3_600_000 : 86_400_000;
+  const current = values.filter((at) => at > now - window);
+  if (current.length >= 3)
+    return Math.max(1, Math.ceil(((current[0] ?? now) + window - now) / 1000));
+  await txn.put(key, [...current, now]);
+  return null;
+}
+
+export async function prepareCapabilityReport(
+  storage: CapabilityObjectStorage,
+  input: unknown
+): Promise<AbuseCommandResult> {
+  const parsed = z.strictObject({ publicBearerSecret, now: epochSchema }).safeParse(input);
+  if (!parsed.success) return { ok: false, code: "invalid_command" };
+  const command = parsed.data;
+  return storage.transaction(async (txn) => {
+    const stored = await txn.get(RECORD_KEY);
+    if (stored === undefined) return { ok: true, authorized: false };
+    const record = parsePersistedRecord(stored);
+    if (record === null) return { ok: false, code: "malformed_state" };
+    const match = await verifyBearerSecret(
+      "public",
+      command.publicBearerSecret,
+      record.publicBearerSecretHash
+    );
+    if (match === "invalid_hash") return { ok: false, code: "malformed_state" };
+    if (match !== "match") return { ok: true, authorized: false };
+    const retryAfter = await reportQuota(txn, "issue", command.now);
+    if (retryAfter !== null) return { ok: false, code: "rate_limited", retryAfter };
+    await scheduleAlarmAtOrBefore(txn, command.now);
+    return { ok: true, authorized: true };
+  });
+}
+
+export async function submitCapabilityReport(
+  storage: CapabilityObjectStorage,
+  input: unknown
+): Promise<AbuseCommandResult> {
+  const parsed = z
+    .strictObject({
+      id: reportIdSchema,
+      locator: locatorSchema,
+      reason: z.enum(REPORT_REASONS),
+      note: z
+        .string()
+        .max(1024)
+        .refine((value) => utf8ByteLength(value) <= 1024)
+        .optional(),
+      nonceCreatedAt: epochSchema,
+      now: epochSchema
+    })
+    .safeParse(input);
+  if (!parsed.success) return { ok: false, code: "invalid_command" };
+  const command = parsed.data;
+  if (command.now < command.nonceCreatedAt || command.now >= command.nonceCreatedAt + 600_000)
+    return { ok: true };
+  return storage.transaction(async (txn) => {
+    const stored = await txn.get(RECORD_KEY);
+    if (stored === undefined) return { ok: true };
+    const record = parsePersistedRecord(stored);
+    if (record === null || record.locator !== command.locator)
+      return { ok: false, code: "malformed_state" };
+    if ((await txn.get(SECURITY_RECORD_PREFIX + command.id)) !== undefined) return { ok: true };
+    const retryAfter = await reportQuota(txn, "submit", command.now);
+    if (retryAfter !== null) return { ok: false, code: "rate_limited", retryAfter };
+    await storeReport(txn, command);
+    await scheduleAlarmAtOrBefore(txn, command.now);
+    return { ok: true };
+  });
+}
+
+export async function inspectAdministrativeCapability(
+  storage: CapabilityObjectStorage,
+  input: unknown
+): Promise<AbuseCommandResult> {
+  const parsed = z.strictObject({ now: epochSchema }).safeParse(input);
+  if (!parsed.success) return { ok: false, code: "invalid_command" };
+  const record = parsePersistedRecord(await storage.get(RECORD_KEY));
+  if (record === null) return { ok: false, code: "not_found" };
+  const access = parseAccessCodeState(await storage.get(ACCESS_CODE_STATE_KEY));
+  if (access === null || !accessStateMatchesRecord(record, access))
+    return { ok: false, code: "malformed_state" };
+  const events = parseCoarseEvents(await storage.list({ prefix: OUTBOX_PREFIX }));
+  if (events === null) return { ok: false, code: "malformed_state" };
+  return {
+    ok: true,
+    metadata: {
+      kind: "secret",
+      state: record.lifecycle.state,
+      created_at: record.createdAt,
+      expires_at: record.policy.expiresAt,
+      events
+    }
+  };
+}
+
+export async function administerCapability(
+  storage: CapabilityObjectStorage,
+  input: unknown
+): Promise<AbuseCommandResult> {
+  const parsed = z
+    .strictObject({
+      mutation: adminMutationSchema,
+      actor: z.string().email().max(254),
+      now: epochSchema
+    })
+    .safeParse(input);
+  if (!parsed.success) return { ok: false, code: "invalid_command" };
+  const { mutation, actor, now } = parsed.data;
+  const binding = await securityDigest(
+    "onceurl.admin-audit-binding.v1",
+    JSON.stringify({ actor, mutation })
+  );
+  const auditId = `adm1_${await securityDigest(
+    "onceurl.admin-audit-id.v1",
+    JSON.stringify({ locator: mutation.locator, operation_id: mutation.operation_id })
+  )}`;
+  return storage.transaction(async (txn) => {
+    const saved = await txn.get(SECURITY_RECORD_PREFIX + auditId);
+    if (saved !== undefined) {
+      const audit = securityRecordSchema.parse(saved);
+      return audit.kind === "audit" && audit.binding === binding
+        ? { ok: true }
+        : { ok: false, code: "event_conflict" };
+    }
+    const stored = await txn.get(RECORD_KEY);
+    if (stored === undefined) return { ok: false, code: "not_found" };
+    let record = parsePersistedRecord(stored);
+    if (record === null || record.locator !== mutation.locator)
+      return { ok: false, code: "malformed_state" };
+    const access = parseAccessCodeState(await txn.get(ACCESS_CODE_STATE_KEY));
+    if (access === null || !accessStateMatchesRecord(record, access))
+      return { ok: false, code: "malformed_state" };
+    if (
+      (record.policy.expiresAt !== null && now >= record.policy.expiresAt) ||
+      (access.deleteAt !== null && now >= access.deleteAt)
+    )
+      return { ok: false, code: "unavailable" };
+    const projections = await normalizeProjectionState(
+      txn,
+      record,
+      await txn.list({ prefix: OUTBOX_PREFIX })
+    );
+    if (projections === null) return { ok: false, code: "malformed_state" };
+    record = projections.record;
+    const at = parseEpochMilliseconds(now);
+    if (!at.ok) return { ok: false, code: "invalid_command" };
+    const commandId = `admin:${mutation.operation_id}`;
+    const transition =
+      record.lifecycle.state === "ABUSE_LOCKED"
+        ? transitionCapability(record.lifecycle, record.policy, {
+            type: "decide_abuse_lock",
+            commandId,
+            privilegedDecisionId: auditId,
+            decision:
+              mutation.action === "release"
+                ? "release"
+                : mutation.action === "delete"
+                  ? "delete"
+                  : "disable",
+            at: at.value
+          })
+        : mutation.action === "release"
+          ? null
+          : transitionCapability(record.lifecycle, record.policy, {
+              type: mutation.action,
+              commandId,
+              at: at.value
+            });
+    if (mutation.action === "abuse_lock" && record.lifecycle.state === "ABUSE_LOCKED")
+      return { ok: false, code: "unavailable" };
+    if (transition === null || !transition.ok) return { ok: false, code: "unavailable" };
+    const eventKey = OUTBOX_PREFIX + commandId;
+    if ((await txn.get(eventKey)) !== undefined) return { ok: false, code: "event_conflict" };
+    if ((await txn.list({ prefix: SECURITY_RECORD_PREFIX })).size >= 1024)
+      return { ok: false, code: "unavailable" };
+    if (
+      mutation.confirm_abuse &&
+      mutation.report_id !== undefined &&
+      !(await confirmReport(txn, mutation.report_id, now))
+    )
+      return { ok: false, code: "not_found" };
+    await txn.put(RECORD_KEY, {
+      ...record,
+      schemaVersion: RECORD_SCHEMA_VERSION,
+      lifecycle: transition.value.lifecycle,
+      ciphertextEnvelope: mutation.action === "delete" ? null : record.ciphertextEnvelope,
+      projectionVersion: record.projectionVersion + 1,
+      lastTransition: projectionTransition(transition.value.event)
+    });
+    await txn.put(
+      eventKey,
+      outboxRecord(transition.value.event, now, record.projectionVersion + 1)
+    );
+    await storeAudit(txn, {
+      id: auditId,
+      locator: record.locator,
+      actor,
+      action: mutation.action,
+      reason: mutation.reason,
+      reportId: mutation.report_id ?? null,
+      binding,
+      now
+    });
+    if (
+      mutation.action === "release" ||
+      mutation.action === "delete" ||
+      record.lifecycle.state === "ABUSE_LOCKED"
+    )
+      await txn.put(ACCESS_CODE_STATE_KEY, emptyAccessCodeState());
+    else if (mutation.action === "abuse_lock")
+      await txn.put(ACCESS_CODE_STATE_KEY, {
+        ...access,
+        lockSource: "operator",
+        deleteAt: unresolvedAccessLockDeleteAt(record.policy, now)
+      });
+    await scheduleAlarmAtOrBefore(txn, now);
+    return { ok: true };
+  });
 }

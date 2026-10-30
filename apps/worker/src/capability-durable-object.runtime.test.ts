@@ -6,7 +6,7 @@ import {
   runInDurableObject,
   type D1Migration
 } from "cloudflare:test";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { app } from "./app";
 import { createChallengeTicket } from "./abuse-control";
 import {
@@ -28,7 +28,6 @@ const policy = {
   postConsumption: { behavior: "delete_capability" }
 } as const;
 
-const LOCATOR = `loc1_${"b".repeat(48)}`;
 const PUBLIC_BEARER = "pub1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 const OWNER_BEARER = "own1_AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE";
 const PUBLIC_HASH = "bh1_AfZsOtbRWT9tmoTvsqNOTGRcSnDN_sX_ip2zb4v2Zdk";
@@ -43,17 +42,19 @@ const ACCESS_CODE_VERIFIER = {
 const BASE_NOW = Date.now();
 const CREATED_AT = new Date(BASE_NOW).toISOString();
 const runtimeEnv = env as WorkerEnv & { TEST_D1_MIGRATIONS: D1Migration[] };
+const fixtureObjects = new Map<DurableObjectStub, { locator: string; capabilityId: string }>();
 
 beforeEach(async () => {
   if (runtimeEnv.DB === undefined) throw new Error("Runtime test requires D1");
   await applyD1Migrations(runtimeEnv.DB, runtimeEnv.TEST_D1_MIGRATIONS);
 });
 
-function createCommand(operationId = "op_create_runtime") {
+function createCommand(stub: DurableObjectStub, operationId = "op_create_runtime") {
+  const identity = fixtureObjects.get(stub);
+  if (identity === undefined) throw new Error("Runtime fixture identity is missing");
   return {
     operationId,
-    capabilityId: "cap_runtime_01HZXAMPLE00000000000",
-    locator: LOCATOR,
+    ...identity,
     createdAt: CREATED_AT,
     policy,
     policyHash: "policy_hash_runtime_123",
@@ -65,10 +66,10 @@ function createCommand(operationId = "op_create_runtime") {
       nonce: "AAAAAAAAAAAAAAAA",
       ciphertext: "AAAAAAAAAAAAAAAAAAAAAAA",
       ad: {
-        capabilityId: "cap_runtime_01HZXAMPLE00000000000",
+        capabilityId: identity.capabilityId,
         createdAt: CREATED_AT,
         kind: "secret",
-        locator: LOCATOR,
+        locator: identity.locator,
         policyHash: "policy_hash_runtime_123",
         purpose: "onceurl.phase1a.secret-text",
         version: "ouzk-v1"
@@ -78,18 +79,23 @@ function createCommand(operationId = "op_create_runtime") {
   };
 }
 
-function claimCommand(operationId: string, nonce: string) {
+function claimCommand(operationId: string, nonce: string, now = BASE_NOW + 1_000) {
   return {
     publicBearerSecret: PUBLIC_BEARER,
     operationId,
     nonce,
-    now: BASE_NOW + 1_000
+    now
   };
 }
 
-function createCommandAt(operationId: string, now: number, expiresAt: number | null = null) {
+function createCommandAt(
+  stub: DurableObjectStub,
+  operationId: string,
+  now: number,
+  expiresAt: number | null = null
+) {
   const createdAt = new Date(now).toISOString();
-  const command = createCommand(operationId);
+  const command = createCommand(stub, operationId);
   return {
     ...command,
     createdAt,
@@ -107,8 +113,67 @@ function objectStub(name: string) {
   if (!capabilityState) {
     throw new Error("Runtime test requires the CAPABILITY_STATE binding");
   }
-  return capabilityState.getByName(`${name}-${crypto.randomUUID()}`);
+  const suffix = Array.from(crypto.getRandomValues(new Uint8Array(24)), (value) =>
+    value.toString(16).padStart(2, "0")
+  ).join("");
+  const locator = `loc1_${suffix}`;
+  const stub = capabilityState.getByName(locator);
+  fixtureObjects.set(stub, {
+    locator,
+    capabilityId: `cap_runtime_${name.replaceAll("-", "_")}_${suffix}`
+  });
+  return stub;
 }
+
+afterAll(async () => {
+  // Preserve real Queue/DO work through acknowledgement before fixture teardown.
+  // Only these owned objects are retired after every behavioral assertion.
+  let pending = 0;
+  for (let attempt = 0; attempt < 48; attempt += 1) {
+    pending = 0;
+    for (const stub of fixtureObjects.keys()) {
+      pending += await runInDurableObject(stub, async (_instance, state) => {
+        const outboxes = await state.storage.list<{ status: string }>({
+          prefix: "capability:v1:outbox:"
+        });
+        return [...outboxes.values()].filter((outbox) => outbox.status !== "delivered").length;
+      });
+    }
+    if (pending === 0) break;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  expect(pending, "Every owned runtime outbox must receive a real Queue acknowledgement").toBe(0);
+  for (const stub of fixtureObjects.keys()) {
+    await runInDurableObject(stub, async (_instance, state) => {
+      await state.storage.deleteAlarm();
+    });
+  }
+  // Let already-accepted duplicate batches finish after the last acknowledgement.
+  await new Promise((resolve) => setTimeout(resolve, 6_000));
+  for (const [stub, identity] of fixtureObjects) {
+    const outboxCount = await runInDurableObject(stub, async (_instance, state) => {
+      const outboxes = await state.storage.list<{ status: string }>({
+        prefix: "capability:v1:outbox:"
+      });
+      expect([...outboxes.values()].every((outbox) => outbox.status === "delivered")).toBe(true);
+      // A late duplicate acknowledgement may legitimately reschedule future
+      // maintenance; retire that owned fixture alarm only after batch quiet.
+      const scheduled = await state.storage.getAlarm();
+      if (scheduled !== null) expect(scheduled).toBeGreaterThan(Date.now());
+      await state.storage.deleteAlarm();
+      expect(await state.storage.getAlarm()).toBeNull();
+      return outboxes.size;
+    });
+    if (runtimeEnv.DB === undefined) throw new Error("Runtime fixture database is missing");
+    await expect(
+      runtimeEnv.DB.prepare(
+        "SELECT count(*) AS count FROM capability_projection_events WHERE capability_id = ?"
+      )
+        .bind(identity.capabilityId)
+        .first()
+    ).resolves.toEqual({ count: outboxCount });
+  }
+}, 30_000);
 
 async function commandRequest(
   stub: DurableObjectStub,
@@ -116,7 +181,11 @@ async function commandRequest(
     | "/internal/capability/create"
     | "/internal/capability/claim"
     | "/internal/capability/authorize"
-    | "/internal/capability/decide-abuse-lock",
+    | "/internal/capability/decide-abuse-lock"
+    | "/internal/capability/delete"
+    | "/internal/capability/administer"
+    | "/internal/capability/admin-inspect"
+    | "/internal/capability/fail-closed-uncertain-restore",
   body: unknown
 ): Promise<{ response: Response; body: unknown }> {
   const response = await stub.fetch(
@@ -172,13 +241,103 @@ function completionBody(prepared: SecretPreparationResponse) {
 }
 
 describe("Capability Durable Object Workers runtime boundary", () => {
+  it("keeps administrative audit and terminal authority across uncertain-restore deletion", async () => {
+    const stub = objectStub("admin-uncertain-restore");
+    const creation = createCommand(stub);
+    expect((await commandRequest(stub, "/internal/capability/create", creation)).body).toEqual({
+      ok: true
+    });
+    const administrativeCommand = {
+      mutation: {
+        locator: creation.locator,
+        operation_id: "53ca14a6-f7d2-4a98-95d6-001c3e388c85",
+        action: "abuse_lock",
+        reason: "other"
+      },
+      actor: "operator@example.test",
+      now: BASE_NOW + 1_000
+    };
+    expect(
+      (await commandRequest(stub, "/internal/capability/administer", administrativeCommand)).body
+    ).toEqual({ ok: true });
+    const decision = {
+      operationId: "op_admin_uncertain_restore_delete",
+      capabilityId: creation.capabilityId,
+      locator: creation.locator,
+      decision: "delete_uncertain_restored_state",
+      now: BASE_NOW + 2_000
+    };
+    // This internal decision is exercised under simulated external quarantine,
+    // not as proof that provider restore or operational quarantine is available.
+    for (let replay = 0; replay < 2; replay += 1) {
+      const result = await commandRequest(
+        stub,
+        "/internal/capability/fail-closed-uncertain-restore",
+        decision
+      );
+      expect(result.response.status).toBe(200);
+      expect(result.body).toEqual({
+        ok: true,
+        state: "DELETED",
+        projectionVersion: 3,
+        ciphertextPresent: false
+      });
+    }
+    expect(
+      (await commandRequest(stub, "/internal/capability/admin-inspect", { now: BASE_NOW + 3_000 }))
+        .body
+    ).toMatchObject({ ok: true, metadata: { state: "DELETED" } });
+    expect(
+      (
+        await commandRequest(stub, "/internal/capability/administer", {
+          ...administrativeCommand,
+          mutation: {
+            ...administrativeCommand.mutation,
+            operation_id: "d470eb7a-7c34-45d2-bbd8-2b45b6cb2076",
+            action: "release"
+          },
+          now: BASE_NOW + 3_000
+        })
+      ).body
+    ).toEqual({ ok: false, code: "unavailable" });
+    expect(
+      (
+        await commandRequest(
+          stub,
+          "/internal/capability/claim",
+          claimCommand("op_after_admin_restore", "nonce_after_admin_restore", BASE_NOW + 4_000)
+        )
+      ).body
+    ).toEqual({ ok: false, code: "unavailable" });
+    await runInDurableObject(stub, async (_instance, state) => {
+      expect(await state.storage.get("capability:v1:record")).toMatchObject({
+        lifecycle: { state: "DELETED" },
+        ciphertextEnvelope: null,
+        projectionVersion: 3
+      });
+      const audits = await state.storage.list({ prefix: "capability:security:v1:" });
+      expect(audits.size).toBe(1);
+      expect([...audits.values()][0]).toMatchObject({
+        kind: "audit",
+        actor: "operator@example.test",
+        action: "abuse_lock"
+      });
+    });
+    if (runtimeEnv.DB === undefined) throw new Error("Runtime fixture database is missing");
+    await expect(
+      runtimeEnv.DB.prepare("SELECT count(*) AS count FROM admin_audit WHERE routing_locator = ?")
+        .bind(creation.locator)
+        .first()
+    ).resolves.toEqual({ count: 1 });
+  });
+
   it("redrives simultaneous expiry and outbox duties after eviction without duplicate effects", async () => {
     const stub = objectStub("alarm-restart");
     const now = Date.now();
     await runInDurableObject(stub, async (_instance, state) => {
       await createCapability(
         state.storage,
-        createCommandAt("op_alarm_restart", now - 2_000, now - 1_000)
+        createCommandAt(stub, "op_alarm_restart", now - 2_000, now - 1_000)
       );
       await state.storage.setAlarm(now + 60_000);
     });
@@ -215,7 +374,10 @@ describe("Capability Durable Object Workers runtime boundary", () => {
     const stub = objectStub("activity-redrive");
     const now = Date.now();
     await runInDurableObject(stub, async (_instance, state) => {
-      await createCapability(state.storage, createCommandAt("op_activity_redrive", now - 1_000));
+      await createCapability(
+        state.storage,
+        createCommandAt(stub, "op_activity_redrive", now - 1_000)
+      );
     });
 
     const authorized = await commandRequest(stub, "/internal/capability/authorize", {
@@ -254,13 +416,127 @@ describe("Capability Durable Object Workers runtime boundary", () => {
     }
   });
 
+  it("preserves both alarm duty origins while redacting raw causes from every error sink", async () => {
+    const maintenance = new Error("Malformed capability access state");
+    maintenance.stack =
+      "Error: sensitive-bearer-marker\n    at maintainCapability (/worker/capability-durable-object-core.ts:1182:13)";
+    const outbox = new Error("sensitive-ciphertext-marker");
+    outbox.name = "ZodError";
+    outbox.stack =
+      "ZodError: sensitive-note-marker\n    at projectSecurityRecords (/worker/abuse-records.ts:187:43)";
+    const logs = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const failure = await runCapabilityAlarmDuties(
+        () => Promise.reject(maintenance),
+        () => Promise.reject(outbox)
+      ).catch((cause: unknown) => cause);
+      expect(failure).toBeInstanceOf(AggregateError);
+      if (!(failure instanceof AggregateError)) throw new Error("Expected both alarm failures");
+      expect(failure.errors.map((cause: Error) => cause.message)).toEqual([
+        "maintenance:malformed_access_state source=capability-durable-object-core.ts:1182:13",
+        "outbox:schema_validation_failed source=abuse-records.ts:187:43"
+      ]);
+      expect(failure.cause).toBe(failure.errors[0]);
+      const evidence = JSON.stringify([
+        failure.message,
+        failure.stack,
+        failure.errors.map((cause: Error) => [cause.message, cause.stack]),
+        logs.mock.calls
+      ]);
+      expect(evidence).toContain("maintenance:malformed_access_state");
+      expect(evidence).toContain("outbox:schema_validation_failed");
+      expect(evidence).not.toContain("sensitive-");
+    } finally {
+      logs.mockRestore();
+    }
+  });
+
+  it.each([
+    new Error("private-token-marker"),
+    new Error("private-token-marker /worker/abuse-records.ts:123456:654321"),
+    "private-token-marker",
+    null
+  ])("keeps unknown alarm causes private without swallowing failure %#", async (cause) => {
+    const logs = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const failure = await runCapabilityAlarmDuties(
+        // Deliberately exercise non-Error rejection values at the runtime boundary.
+        // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
+        () => Promise.reject(cause),
+        () => Promise.resolve()
+      ).catch((error: unknown) => error);
+      expect(failure).toBeInstanceOf(AggregateError);
+      if (!(failure instanceof AggregateError)) throw new Error("Expected an alarm failure");
+      expect(failure.message).toContain("maintenance:unknown_error source=unavailable");
+      expect(JSON.stringify([failure.message, failure.errors, logs.mock.calls])).not.toContain(
+        "private-token-marker"
+      );
+    } finally {
+      logs.mockRestore();
+    }
+  });
+
+  it.each([
+    ["storage is disconnected: private-marker", "storage_disconnected"],
+    [
+      "Cannot perform I/O on behalf of a different request: private-marker",
+      "runtime_io_scope_mismatch"
+    ],
+    ["input gate was broken: private-marker", "storage_gate_broken"],
+    ["SQLITE_ERROR with private-marker", "sqlite_failure"]
+  ])("classifies native alarm failure %s without retaining its detail", async (message, reason) => {
+    const logs = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const failure = await runCapabilityAlarmDuties(
+        () => Promise.resolve(),
+        () => Promise.reject(new Error(message))
+      ).catch((error: unknown) => error);
+      expect(failure).toBeInstanceOf(AggregateError);
+      if (!(failure instanceof AggregateError)) throw new Error("Expected outbox failure");
+      const underlying: unknown = failure.errors[0];
+      if (!(underlying instanceof Error)) throw new Error("Expected a safe underlying Error");
+      expect(underlying.message).toBe(`outbox:${reason} source=unavailable`);
+      expect(failure.cause).toBe(failure.errors[0]);
+      expect(JSON.stringify([failure.message, failure.errors, logs.mock.calls])).not.toContain(
+        "private-marker"
+      );
+    } finally {
+      logs.mockRestore();
+    }
+  });
+
+  it("still runs outbox work when a failed maintenance cause cannot be inspected", async () => {
+    const cause = new Error("private-cause-marker");
+    Object.defineProperty(cause, "message", {
+      get() {
+        throw new Error("private-getter-marker");
+      }
+    });
+    const outbox = vi.fn(() => Promise.resolve());
+    const logs = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const failure = await runCapabilityAlarmDuties(() => Promise.reject(cause), outbox).catch(
+        (error: unknown) => error
+      );
+      expect(outbox).toHaveBeenCalledOnce();
+      expect(failure).toBeInstanceOf(AggregateError);
+      if (!(failure instanceof AggregateError)) throw new Error("Expected maintenance failure");
+      expect(failure.message).toContain("maintenance:uninspectable_error source=unavailable");
+      expect(JSON.stringify([failure.message, failure.errors, logs.mock.calls])).not.toContain(
+        "private-"
+      );
+    } finally {
+      logs.mockRestore();
+    }
+  });
+
   it("deletes an overdue protective lock when a privileged decision beats the delayed alarm", async () => {
     const stub = objectStub("late-lock-alarm");
     const deleteAt = Date.now() + 60_000;
     const lockedAt = deleteAt - 1_000;
     await runInDurableObject(stub, async (_instance, state) => {
       await createCapability(state.storage, {
-        ...createCommandAt("op_create_late_lock", lockedAt - 1_000),
+        ...createCommandAt(stub, "op_create_late_lock", lockedAt - 1_000),
         accessCodeVerifier: ACCESS_CODE_VERIFIER
       });
       const record = await state.storage.get<Record<string, unknown>>("capability:v1:record");
@@ -357,6 +633,10 @@ describe("Capability Durable Object Workers runtime boundary", () => {
       throw new Error("Runtime test requires the CAPABILITY_STATE binding");
     }
     const stub = capabilityState.getByName(prepared.creation.locator);
+    fixtureObjects.set(stub, {
+      locator: prepared.creation.locator,
+      capabilityId: prepared.creation.capability_id
+    });
     const storedAfterLostResponse = await runInDurableObject(stub, async (_instance, state) =>
       state.storage.get("capability:v1:record")
     );
@@ -382,7 +662,7 @@ describe("Capability Durable Object Workers runtime boundary", () => {
   it("authorizes both route authorities without consuming", async () => {
     const stub = objectStub("authorize");
     expect(
-      (await commandRequest(stub, "/internal/capability/create", createCommand())).body
+      (await commandRequest(stub, "/internal/capability/create", createCommand(stub))).body
     ).toEqual({ ok: true });
 
     const publicResult = await commandRequest(stub, "/internal/capability/authorize", {
@@ -409,18 +689,18 @@ describe("Capability Durable Object Workers runtime boundary", () => {
     );
     expect(stored).toMatchObject({
       lifecycle: { state: "ACTIVE", committedConsumptions: 0 },
-      ciphertextEnvelope: createCommand().ciphertextEnvelope
+      ciphertextEnvelope: createCommand(stub).ciphertextEnvelope
     });
   });
 
-  it("creates through CAPABILITY_STATE and releases once across concurrent claims", async () => {
+  it("creates through CAPABILITY_STATE and releases once across 64 concurrent claims", async () => {
     const stub = objectStub("concurrent");
-    const created = await commandRequest(stub, "/internal/capability/create", createCommand());
+    const created = await commandRequest(stub, "/internal/capability/create", createCommand(stub));
     expect(created.response.status).toBe(200);
     expect(created.body).toEqual({ ok: true });
 
     const claims = await Promise.all(
-      Array.from({ length: 8 }, (_, index) =>
+      Array.from({ length: 64 }, (_, index) =>
         commandRequest(
           stub,
           "/internal/capability/claim",
@@ -433,12 +713,16 @@ describe("Capability Durable Object Workers runtime boundary", () => {
     expect(released[0]?.body).toMatchObject({
       ok: true,
       outcome: "released",
-      ciphertextEnvelope: createCommand().ciphertextEnvelope
+      ciphertextEnvelope: createCommand(stub).ciphertextEnvelope
     });
     expect(
       claims
         .filter(({ body }) => !isReleased(body))
-        .every(({ body }) => JSON.stringify(body).includes('"code":"unavailable"'))
+        .every(({ body }) =>
+          ["unavailable", "rate_limited"].some((code) =>
+            JSON.stringify(body).includes(`"code":"${code}"`)
+          )
+        )
     ).toBe(true);
 
     const operationId = claims.findIndex(({ body }) => isReleased(body));
@@ -447,7 +731,8 @@ describe("Capability Durable Object Workers runtime boundary", () => {
       "/internal/capability/claim",
       claimCommand(
         `op_concurrent_runtime_${operationId}`,
-        `nonce_concurrent_runtime_${operationId}`
+        `nonce_concurrent_runtime_${operationId}`,
+        BASE_NOW + 61_000
       )
     );
     expect(retry.response.status).toBe(409);
@@ -465,12 +750,105 @@ describe("Capability Durable Object Workers runtime boundary", () => {
     });
     expect(stored.outboxKeys).toContain("capability:v1:outbox:op_create_runtime");
     expect(stored.outboxKeys).toHaveLength(2);
+  }, 20_000);
+
+  it("withholds ciphertext after a consume response is discarded and the object is evicted", async () => {
+    const stub = objectStub("consume-response-loss");
+    await commandRequest(
+      stub,
+      "/internal/capability/create",
+      createCommand(stub, "op_response_loss_create")
+    );
+
+    const discarded = await stub.fetch(
+      new Request("https://capability.invalid/internal/capability/claim", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(
+          claimCommand("op_response_loss_consume", "nonce_response_loss_consume")
+        )
+      })
+    );
+    expect(discarded.status).toBe(200);
+    // Cancel rather than parse the body: the client-side observation is response loss.
+    await discarded.body?.cancel();
+    await evictDurableObject(stub);
+
+    const retry = await commandRequest(
+      stub,
+      "/internal/capability/claim",
+      claimCommand("op_response_loss_consume", "nonce_response_loss_consume", BASE_NOW + 61_000)
+    );
+    const fresh = await commandRequest(
+      stub,
+      "/internal/capability/claim",
+      claimCommand(
+        "op_fresh_after_response_loss",
+        "nonce_fresh_after_response_loss",
+        BASE_NOW + 61_001
+      )
+    );
+    expect(retry.body).toEqual({ ok: false, code: "unavailable" });
+    expect(fresh.body).toEqual({ ok: false, code: "unavailable" });
+
+    await expect(
+      runInDurableObject(stub, async (_instance, state) => ({
+        record: await state.storage.get("capability:v1:record"),
+        replay: await state.storage.get("capability:v1:claim:op_response_loss_consume"),
+        outbox: await state.storage.get("capability:v1:outbox:op_response_loss_consume")
+      }))
+    ).resolves.toMatchObject({
+      record: {
+        lifecycle: { state: "CONSUMED", committedConsumptions: 1 },
+        ciphertextEnvelope: null
+      },
+      replay: { operationId: "op_response_loss_consume" },
+      outbox: { projectionVersion: 2, event: { type: "capability_consumption_committed" } }
+    });
+  }, 20_000);
+
+  it("keeps owner-delete versus claim safe at the real concurrent request boundary", async () => {
+    for (const ordering of ["claim_first", "delete_first"] as const) {
+      const stub = objectStub(`delete-claim-${ordering}`);
+      await commandRequest(
+        stub,
+        "/internal/capability/create",
+        createCommand(stub, `op_delete_claim_create_${ordering}`)
+      );
+      const claimRequest = () =>
+        commandRequest(
+          stub,
+          "/internal/capability/claim",
+          claimCommand(`op_delete_claim_consume_${ordering}`, `nonce_delete_claim_${ordering}`)
+        );
+      const deleteRequest = () =>
+        commandRequest(stub, "/internal/capability/delete", {
+          operationId: `op_delete_claim_owner_${ordering}`,
+          ownerBearerSecret: OWNER_BEARER,
+          now: BASE_NOW + 1_000
+        });
+      const results = await Promise.all(
+        ordering === "claim_first"
+          ? [claimRequest(), deleteRequest()]
+          : [deleteRequest(), claimRequest()]
+      );
+
+      expect(results.filter(({ body }) => isReleased(body)).length).toBeLessThanOrEqual(1);
+      await expect(
+        runInDurableObject(stub, async (_instance, state) => ({
+          record: await state.storage.get("capability:v1:record"),
+          outboxes: [...(await state.storage.list({ prefix: "capability:v1:outbox:" })).values()]
+        }))
+      ).resolves.toMatchObject({
+        record: { lifecycle: { state: "DELETED" }, ciphertextEnvelope: null }
+      });
+    }
   });
 
   it("returns controlled errors for malformed JSON and command bodies without consuming", async () => {
     const stub = objectStub("malformed");
     expect(
-      (await commandRequest(stub, "/internal/capability/create", createCommand())).body
+      (await commandRequest(stub, "/internal/capability/create", createCommand(stub))).body
     ).toEqual({ ok: true });
 
     const malformed = await stub.fetch(
@@ -507,7 +885,7 @@ describe("Capability Durable Object Workers runtime boundary", () => {
 
   it("rejects passive methods without invoking claim logic", async () => {
     const stub = objectStub("passive");
-    await commandRequest(stub, "/internal/capability/create", createCommand());
+    await commandRequest(stub, "/internal/capability/create", createCommand(stub));
 
     const passive = await stub.fetch(
       new Request("https://capability.invalid/internal/capability/claim", {
@@ -528,7 +906,7 @@ describe("Capability Durable Object Workers runtime boundary", () => {
 
   it("rolls back actual Durable Object storage when a claim transaction fails", async () => {
     const stub = objectStub("rollback");
-    await commandRequest(stub, "/internal/capability/create", createCommand());
+    await commandRequest(stub, "/internal/capability/create", createCommand(stub));
 
     await runInDurableObject(stub, async (_instance, state) => {
       const storage: CapabilityObjectStorage = {
@@ -598,7 +976,7 @@ describe("Capability Durable Object Workers runtime boundary", () => {
 
       expect(await state.storage.get("capability:v1:record")).toMatchObject({
         lifecycle: { state: "ACTIVE", committedConsumptions: 0 },
-        ciphertextEnvelope: createCommand().ciphertextEnvelope
+        ciphertextEnvelope: createCommand(stub).ciphertextEnvelope
       });
       expect(await state.storage.get("capability:v1:outbox:op_rollback")).toBeUndefined();
       expect(await state.storage.get("capability:v1:claim:op_rollback")).toBeUndefined();

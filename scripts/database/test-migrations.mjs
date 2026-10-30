@@ -750,6 +750,99 @@ try {
     "D1 migration tracking table does not record every committed migration"
   );
 
+  const freshLocator = `loc1_${"e".repeat(48)}`;
+  assertStringSet(
+    stringFieldValues(
+      executeSql(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('abuse_reports','admin_audit') ORDER BY name;"
+      ),
+      "name"
+    ),
+    ["abuse_reports", "admin_audit"],
+    "Admin/report projection tables are missing"
+  );
+  assertStringSet(
+    stringFieldValues(executeSql("PRAGMA table_info(abuse_reports);"), "name"),
+    [
+      "id",
+      "routing_locator",
+      "reason",
+      "note",
+      "created_at",
+      "note_delete_at",
+      "confirmed_at",
+      "retain_until",
+      "version"
+    ],
+    "Report columns differ"
+  );
+  assertStringSet(
+    stringFieldValues(executeSql("PRAGMA table_info(admin_audit);"), "name"),
+    [
+      "id",
+      "routing_locator",
+      "actor",
+      "action",
+      "reason",
+      "report_id",
+      "occurred_at",
+      "retain_until"
+    ],
+    "Audit columns differ"
+  );
+  assertStringSet(
+    stringFieldValues(executeSql("PRAGMA index_list(abuse_reports);"), "name").filter(
+      (name) => !name.startsWith("sqlite_")
+    ),
+    ["abuse_reports_retention_idx", "abuse_reports_note_cleanup_idx", "abuse_reports_created_idx"],
+    "Report cleanup/listing indexes differ"
+  );
+  const reportSql =
+    "INSERT INTO abuse_reports(id,routing_locator,reason,note,created_at,note_delete_at,confirmed_at,retain_until,version) VALUES ";
+  expectConstraintFailure(
+    reportSql +
+      "('bad-note'," +
+      quoteSql(freshLocator) +
+      ",'other','" +
+      "😀".repeat(257) +
+      "',1000,2592001000,NULL,2592001000,1);",
+    "Oversized UTF-8 report note"
+  );
+  expectConstraintFailure(
+    reportSql +
+      "('bad-reason'," +
+      quoteSql(freshLocator) +
+      ",'unbounded',NULL,1000,2592001000,NULL,2592001000,1);",
+    "Invalid report reason"
+  );
+  expectConstraintFailure(
+    reportSql +
+      "('bad-retention'," +
+      quoteSql(freshLocator) +
+      ",'other',NULL,1000,2592001001,NULL,2592001000,1);",
+    "Unapproved report note retention"
+  );
+  executeSql(
+    reportSql +
+      "('safe-report'," +
+      quoteSql(freshLocator) +
+      ",'other','hostile-note',1000,2592001000,2000,15552002000,1);"
+  );
+  executeSql(
+    "UPDATE abuse_reports SET note=NULL WHERE note_delete_at<=2592001000; UPDATE abuse_reports SET note=NULL WHERE note_delete_at<=2592001000;"
+  );
+  assert(
+    onlyRow(executeSql("SELECT note,confirmed_at FROM abuse_reports WHERE id='safe-report';"))
+      .note === null,
+    "Confirmed abuse preserved the original note"
+  );
+  expectConstraintFailure(
+    "INSERT INTO admin_audit(id,routing_locator,actor,action,reason,occurred_at,retain_until) VALUES ('bad-audit'," +
+      quoteSql(freshLocator) +
+      ",'operator@onceurl.invalid','reactivate','other',1000,15552001000);",
+    "Unapproved administrative action"
+  );
+
   const schemaFingerprintBefore = JSON.stringify(
     executeSql(
       "SELECT type, name, tbl_name, sql FROM sqlite_master " +

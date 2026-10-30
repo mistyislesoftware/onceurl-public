@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { basename, join, relative } from "node:path";
+import { basename, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
@@ -33,10 +33,10 @@ describe("built deployable artifact isolation", () => {
     expect(functionalDist).not.toBe(marketingDist);
 
     const functionalFiles = artifactFiles(functionalDist).map((path) =>
-      relative(functionalDist, path)
+      relative(functionalDist, path).split(sep).join("/")
     );
     const marketingFiles = artifactFiles(marketingDist).map((path) =>
-      relative(marketingDist, path)
+      relative(marketingDist, path).split(sep).join("/")
     );
 
     expect(functionalFiles.some((path) => path.startsWith("assets/"))).toBe(true);

@@ -15,3 +15,10 @@ TURNSTILE_SITE_KEY=1x00000000000000000000AA
 # only in the ignored .dev.vars file. No signing-key placeholder is committed.
 # SECRET_PREPARATION_HMAC_PREVIOUS_KEY is optional and verification-only during
 # a bounded rotation grace period; never reuse a checked-in placeholder for it.
+
+# Administrative trust stays absent/unavailable by default. Configure only under
+# a separately authorized operational change; never commit operator identities.
+# ADMIN_ACCESS_ISSUER=<exact reviewed HTTPS Access team origin>
+# ADMIN_ACCESS_AUDIENCE=<exact reviewed application audience>
+# ADMIN_OPERATOR_EMAILS=<JSON array of exact approved operator email strings>
+# Local automated fixtures use an isolated .invalid issuer and synthetic keys.

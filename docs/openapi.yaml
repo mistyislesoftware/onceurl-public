@@ -34,9 +34,9 @@ paths:
   /challenges:
     post:
       operationId: createIsolatedChallenge
-      summary: Create a stateless capability-blind five-minute preparation ticket.
+      summary: Create a stateless capability-blind five-minute preparation or report ticket.
       description: >-
-        This public endpoint accepts only onceurl_prepare. It signs a bounded correlation without
+        This public endpoint accepts only onceurl_prepare or onceurl_report_submit. It signs a bounded correlation without
         creating Durable Object state. Access-code tickets are returned only after an authorized
         capability claim produces challenge_required.
       tags:
@@ -52,7 +52,7 @@ paths:
               properties:
                 action:
                   type: string
-                  const: onceurl_prepare
+                  enum: [onceurl_prepare, onceurl_report_submit]
       responses:
         "200":
           description: A signed, nonce-bearing preparation correlation with no capability identity.
@@ -349,7 +349,422 @@ paths:
           $ref: "#/components/responses/RateLimited"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
+  /reports/nonce:
+    post:
+      operationId: issueReportNonce
+      summary: Issue an opaque, capability-bound ten-minute reporting nonce.
+      description: Same-origin, explicit POST. Exact issuance limits are 5/minute/IP and
+        3/hour/capability; actual quota rejection includes deterministic Retry-After. A missing or
+        incorrect capability authority still receives an opaque nonce without exposing capability
+        existence/state. No bearer or full URL is persisted.
+      tags:
+        - Reports
+      parameters:
+        - &a3
+          name: Origin
+          in: header
+          required: true
+          description: Must exactly equal the configured functional origin.
+          schema:
+            type: string
+            format: uri
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - locator
+                - public_bearer
+              properties:
+                locator: &a4
+                  type: string
+                  pattern: ^loc1_[0-9a-f]{48}$
+                public_bearer:
+                  type: string
+                  pattern: ^pub1_[A-Za-z0-9_-]{43}$
+      responses:
+        "200":
+          description: Successful bounded exchange.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - nonce
+                  - expires_in_seconds
+                properties:
+                  nonce:
+                    type: string
+                    pattern: ^rpt1_[A-Za-z0-9_-]{43}$
+                  expires_in_seconds:
+                    type: integer
+                    const: 600
+        "400": &a1
+          description: Privacy-safe denial; dependencies fail closed.
+          content: &a2
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - error
+                properties:
+                  error:
+                    type: string
+                    enum:
+                      - request_unavailable
+                      - service_unavailable
+                      - rate_limited
+        "403": *a1
+        "429":
+          description: Privacy-safe denial; dependencies fail closed.
+          content: *a2
+          headers:
+            Retry-After:
+              description: Remaining enforced rolling interval in seconds.
+              schema:
+                type: integer
+                minimum: 1
+        "503": *a1
+  /reports:
+    post:
+      operationId: submitAbuseReport
+      summary: Acknowledge reporting without revealing existence/state or changing lifecycle.
+      description:
+        Accepts only nonce, reason and optional note. Notes are hostile plain text, limited to
+        1024 UTF-8 bytes, absent from ordinary admin views/logs/traces/metrics and redacted within 30
+        days even if confirmed. A single-use, verified onceurl_report_submit ticket is supplied only
+        in the X-OnceURL-Challenge header, from the isolated capability-blind Managed Turnstile flow.
+        Canonical-IP validation, the exact 5/hour/IP quota and verified challenge consumption precede
+        any nonce-object lookup. The purpose-bound nonce is atomically consumed at most once; the
+        capability retains its exact 3/24 hours quota and nonce-derived report deduplication.
+        Unavailable IP-quota or challenge dependencies fail before nonce consumption. Nonce replay/expiry and nonexistent
+        capability receive the same acknowledgement after required dependency/quota/challenge checks;
+        no report auto-enforces.
+      tags:
+        - Reports
+      parameters:
+        - *a3
+        - name: X-OnceURL-Challenge
+          in: header
+          required: true
+          description: Single-use verified report-purpose correlation; not recipient authority.
+          schema:
+            type: string
+            pattern: ^chl2_r_\d{1,16}_[A-Za-z0-9_-]{22}_[A-Za-z0-9_-]{43}$
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - nonce
+                - reason
+              properties:
+                nonce:
+                  type: string
+                  pattern: ^rpt1_[A-Za-z0-9_-]{43}$
+                reason: &a5
+                  type: string
+                  enum:
+                    - phishing
+                    - malware
+                    - harassment
+                    - spam
+                    - other
+                note:
+                  type: string
+                  maxLength: 1024
+                  description: At most 1024 encoded UTF-8 bytes. No markup interpretation.
+      responses:
+        "200":
+          description: Successful bounded exchange.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - acknowledged
+                properties:
+                  acknowledged:
+                    type: boolean
+                    const: true
+        "400": *a1
+        "403": *a1
+        "429":
+          description: Privacy-safe denial; dependencies fail closed.
+          content: *a2
+          headers:
+            Retry-After:
+              description: Remaining enforced rolling interval in seconds.
+              schema:
+                type: integer
+                minimum: 1
+        "503": *a1
+  /internal/admin:
+    servers:
+      - url: /
+    get:
+      operationId: getAdminDocument
+      summary: Serve the minimal authenticated operator document.
+      tags:
+        - Administration
+      security:
+        - AccessAssertion: []
+      responses:
+        "200":
+          description: Bundled same-origin document; private,no-store, restrictive CSP, no-referrer,
+            noindex/nofollow/noarchive.
+          content:
+            text/html:
+              schema:
+                type: string
+        "403": *a1
+        "503": *a1
+  /internal/admin/metrics:
+    servers:
+      - url: /
+    get:
+      operationId: getPrivacySafeMetrics
+      summary: Read bounded identifier-free Phase 1A aggregates and freshness.
+      tags:
+        - Administration
+      security:
+        - AccessAssertion: []
+      responses:
+        "200":
+          description: Authenticated private/no-store readout. Approved dimensions only;
+            at most 500 aggregate rows, explicit truncation, per-environment denominators
+            and grouped retained-source reconciliation. The readout exposes an 8,000-event
+            source-hour admission limit and saturated hours; admission-limited summaries are
+            partial and rates are withheld. No event or capability identifiers.
+          content:
+            application/json:
+              schema:
+                type: object
+        "403": *a1
+        "503": *a1
+  /internal/admin/client.js:
+    servers:
+      - url: /
+    get:
+      operationId: getAdminClient
+      summary: Serve the authenticated same-origin operator client.
+      tags:
+        - Administration
+      security:
+        - AccessAssertion: []
+      responses:
+        "200":
+          description: Bundled client; the same assertion boundary is enforced.
+          content:
+            text/javascript:
+              schema:
+                type: string
+        "403": *a1
+        "503": *a1
+  /internal/admin/reports:
+    servers:
+      - url: /
+    post:
+      operationId: listAdministrativeReports
+      summary: Read up to 50 recent safe report projections.
+      tags:
+        - Administration
+      security:
+        - AccessAssertion: []
+      parameters:
+        - *a3
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: []
+              properties: {}
+      responses:
+        "200":
+          description: Successful bounded exchange.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - reports
+                properties:
+                  reports:
+                    type: array
+                    maxItems: 50
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required:
+                        - id
+                        - routing_locator
+                        - reason
+                        - created_at
+                        - confirmed_at
+                      properties:
+                        id:
+                          type: string
+                        routing_locator: *a4
+                        reason: *a5
+                        created_at:
+                          type: integer
+                        confirmed_at:
+                          type:
+                            - integer
+                            - "null"
+        "400": *a1
+        "403": *a1
+        "503": *a1
+  /internal/admin/inspect:
+    servers:
+      - url: /
+    post:
+      operationId: inspectAdministrativeCapability
+      summary: Read safe metadata/events directly from the authoritative Durable Object.
+      tags:
+        - Administration
+      security:
+        - AccessAssertion: []
+      parameters:
+        - *a3
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - locator
+              properties:
+                locator: *a4
+      responses:
+        "200":
+          description: Successful bounded exchange.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - capability
+                properties:
+                  capability:
+                    $ref: "#/components/schemas/AdministrativeMetadata"
+        "400": *a1
+        "403": *a1
+        "503": *a1
+  /internal/admin/csrf:
+    servers:
+      - url: /
+    post:
+      operationId: issueAdministrativeCsrf
+      summary: Issue a dedicated security-control token for one intended mutation.
+      tags:
+        - Administration
+      security:
+        - AccessAssertion: []
+      parameters:
+        - *a3
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdministrativeMutation"
+      responses:
+        "200":
+          description: Successful bounded exchange.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - csrf_token
+                properties:
+                  csrf_token:
+                    type: string
+                    pattern: ^csrf1_[A-Za-z0-9_-]{43}$
+        "400": *a1
+        "403": *a1
+        "503": *a1
+      description:
+        Dedicated security exchange, separate from ordinary metadata/views. Token binds exact
+        authorized email, digest of the verified assertion/session and full canonical intended
+        mutation; lifetime is at most five minutes and never beyond the accepted assertion. No token
+        is placed in cookies, URLs, audits or persistent browser storage.
+  /internal/admin/action:
+    servers:
+      - url: /
+    post:
+      operationId: applyAdministrativeDecision
+      summary: Commit an attributed enforcement decision through the capability Durable Object.
+      tags:
+        - Administration
+      security:
+        - AccessAssertion: []
+          ApplicationCsrf: []
+      parameters:
+        - *a3
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdministrativeMutation"
+      responses:
+        "200":
+          description: Successful bounded exchange.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - recorded
+                properties:
+                  recorded:
+                    type: boolean
+                    const: true
+        "400": *a1
+        "403": *a1
+        "409": *a1
+        "503": *a1
+      description: Fresh assertion validation and exact operator authorization precede single-use
+        mutation-bound CSRF consumption and DO invocation. Disable, abuse_lock, delete and protective
+        release are the only operations. Lifecycle/outbox and 180-day audit source commit atomically.
+        Retry the same operation and body with a newly issued CSRF token after an ambiguous response;
+        terminal authority is never reopened. Explicit confirmed-abuse selection is independent of
+        protective locks.
 components:
+  securitySchemes:
+    AccessAssertion:
+      type: apiKey
+      in: header
+      name: Cf-Access-Jwt-Assertion
+      description:
+        RS256 assertion verified against the pinned issuer/application and exact configured
+        operator allowlist on every request. Ambient cookies/edge headers grant no OnceURL authority.
+    ApplicationCsrf:
+      type: apiKey
+      in: header
+      name: X-OnceURL-CSRF
+      description: Server-issued, single-use token bound to the verified operator/session and exact
+        intended mutation.
   headers:
     RequestId:
       description: Unique request identifier for support and log correlation.
@@ -512,6 +927,98 @@ components:
         type: string
         pattern: ^own1_[A-Za-z0-9_-]{43}$
   schemas:
+    AdministrativeMutation:
+      type: object
+      additionalProperties: false
+      required:
+        - locator
+        - operation_id
+        - action
+        - reason
+      properties:
+        locator:
+          type: string
+          pattern: ^loc1_[0-9a-f]{48}$
+        operation_id:
+          type: string
+          format: uuid
+        action:
+          type: string
+          enum:
+            - disable
+            - abuse_lock
+            - delete
+            - release
+        reason:
+          type: string
+          enum:
+            - phishing
+            - malware
+            - harassment
+            - spam
+            - other
+        report_id:
+          type: string
+          pattern: ^rep1_[A-Za-z0-9_-]{43}$
+        confirm_abuse:
+          type: boolean
+          default: false
+          description:
+            Requires report_id and a non-release enforcement action. Independently confirms abuse;
+            notes still expire at their original 30-day deadline.
+    AdministrativeMetadata:
+      type: object
+      additionalProperties: false
+      required:
+        - kind
+        - state
+        - created_at
+        - expires_at
+        - events
+      properties:
+        kind:
+          type: string
+          const: secret
+        state:
+          type: string
+          enum:
+            - DRAFT
+            - ACTIVE
+            - CONSUMED
+            - EXPIRED
+            - DISABLED
+            - ABUSE_LOCKED
+            - DELETED
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type:
+            - integer
+            - "null"
+        events:
+          type: array
+          maxItems: 64
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - type
+              - occurredAt
+            properties:
+              type:
+                type: string
+                enum:
+                  - created
+                  - consumed
+                  - expired
+                  - disabled
+                  - abuse_locked
+                  - reactivated
+                  - abuse_lock_decided
+                  - deleted
+              occurredAt:
+                type: integer
     HealthResponse:
       type: object
       additionalProperties: false
@@ -809,10 +1316,10 @@ components:
           $ref: "#/components/schemas/ChallengeId"
     ChallengeId:
       type: string
-      pattern: ^chl2_[pa]_\d{1,16}_[A-Za-z0-9_-]{22}_[A-Za-z0-9_-]{43}$
+      pattern: ^chl2_[par]_\d{1,16}_[A-Za-z0-9_-]{22}_[A-Za-z0-9_-]{43}$
     ChallengeAction:
       type: string
-      enum: [onceurl_prepare, onceurl_access_code]
+      enum: [onceurl_prepare, onceurl_access_code, onceurl_report_submit]
     ChallengeStateRequest:
       type: object
       additionalProperties: false

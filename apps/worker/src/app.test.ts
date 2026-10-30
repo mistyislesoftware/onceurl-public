@@ -795,39 +795,46 @@ describe("zero-knowledge secret creation API", () => {
 });
 
 describe("direct capability routing", () => {
-  it("fails passive requests closed when exact IP accounting is limited or unavailable", async () => {
-    const capability = capabilityRouteEnv(() => {
-      throw new Error("Capability object must not be reached after an IP quota failure");
-    });
-    const abuseBinding = (result: unknown) =>
-      ({
-        getByName: () => ({ fetch: () => Promise.resolve(Response.json(result)) })
-      }) as unknown as WorkerEnv["ABUSE_CONTROL"];
-    const limited = await app.request(
-      `/s/${LOCATOR}/${PUBLIC_BEARER}`,
-      { headers: { "CF-Connecting-IP": "192.0.2.20" } },
-      {
-        ...capability.workerEnv,
-        ABUSE_CONTROL: abuseBinding({ ok: false, code: "rate_limited", retryAfter: 17 })
+  it.each(["GET", "HEAD"] as const)(
+    "fails passive %s requests closed when exact IP accounting is limited or unavailable",
+    async (method) => {
+      const capability = capabilityRouteEnv(() => {
+        throw new Error("Capability object must not be reached after an IP quota failure");
+      });
+      const abuseBinding = (result: unknown) =>
+        ({
+          getByName: () => ({ fetch: () => Promise.resolve(Response.json(result)) })
+        }) as unknown as WorkerEnv["ABUSE_CONTROL"];
+      const limited = await app.request(
+        `/s/${LOCATOR}/${PUBLIC_BEARER}`,
+        { method, headers: { "CF-Connecting-IP": "192.0.2.20" } },
+        {
+          ...capability.workerEnv,
+          ABUSE_CONTROL: abuseBinding({ ok: false, code: "rate_limited", retryAfter: 17 })
+        }
+      );
+      expect(limited.status).toBe(429);
+      expect(limited.headers.get("Retry-After")).toBe("17");
+      if (method === "GET") {
+        await expect(limited.json()).resolves.toMatchObject({ error: { code: "rate_limited" } });
+      } else {
+        await expect(limited.text()).resolves.toBe("");
       }
-    );
-    expect(limited.status).toBe(429);
-    expect(limited.headers.get("Retry-After")).toBe("17");
-    await expect(limited.json()).resolves.toMatchObject({ error: { code: "rate_limited" } });
 
-    const unavailable = await app.request(
-      `/s/${LOCATOR}/${PUBLIC_BEARER}`,
-      { headers: { "CF-Connecting-IP": "192.0.2.20" } },
-      {
-        ...capability.workerEnv,
-        ABUSE_CONTROL: {
-          getByName: () => ({ fetch: () => Promise.reject(new Error("dependency down")) })
-        } as unknown as WorkerEnv["ABUSE_CONTROL"]
-      }
-    );
-    expect(unavailable.status).toBe(503);
-    expect(capability.getByName).not.toHaveBeenCalled();
-  });
+      const unavailable = await app.request(
+        `/s/${LOCATOR}/${PUBLIC_BEARER}`,
+        { method, headers: { "CF-Connecting-IP": "192.0.2.20" } },
+        {
+          ...capability.workerEnv,
+          ABUSE_CONTROL: {
+            getByName: () => ({ fetch: () => Promise.reject(new Error("dependency down")) })
+          } as unknown as WorkerEnv["ABUSE_CONTROL"]
+        }
+      );
+      expect(unavailable.status).toBe(503);
+      expect(capability.getByName).not.toHaveBeenCalled();
+    }
+  );
 
   it("requires the trusted connecting-IP header outside local development", async () => {
     const capability = capabilityRouteEnv(() => {

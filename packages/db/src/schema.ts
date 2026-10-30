@@ -10,6 +10,70 @@ import {
   uniqueIndex
 } from "drizzle-orm/sqlite-core";
 
+// Purpose-limited event receipts, never capability/recipient identity.
+export const phase1aMetricReceipts = sqliteTable(
+  "phase1a_metric_receipts",
+  {
+    eventId: text("event_id").primaryKey(),
+    timeBucket: integer("time_bucket").notNull(),
+    dimensions: text("dimensions").notNull(),
+    processedAt: integer("processed_at").notNull(),
+    retainUntil: integer("retain_until").notNull(),
+    applied: integer("applied").notNull().default(0)
+  },
+  (table) => [
+    index("phase1a_metric_receipts_retention_idx").on(table.retainUntil),
+    check(
+      "phase1a_metric_receipts_dimensions",
+      sql`json_valid(${table.dimensions}) AND json_type(${table.dimensions}) = 'object'`
+    ),
+    check(
+      "phase1a_metric_receipts_window",
+      sql`${table.timeBucket} >= 0 AND ${table.timeBucket} % 3600000 = 0 AND ${table.retainUntil} = ${table.timeBucket} + 2592000000`
+    ),
+    check("phase1a_metric_receipts_applied", sql`${table.applied} IN (0, 1)`)
+  ]
+);
+
+// Aggregate keys contain only bounded approved dimensions; no dedupe IDs.
+export const phase1aMetricAggregates = sqliteTable(
+  "phase1a_metric_aggregates",
+  {
+    timeBucket: integer("time_bucket").notNull(),
+    dimensions: text("dimensions").notNull(),
+    count: integer("count").notNull(),
+    processedAt: integer("processed_at").notNull(),
+    retainUntil: integer("retain_until").notNull()
+  },
+  (table) => [
+    primaryKey({ columns: [table.timeBucket, table.dimensions] }),
+    index("phase1a_metric_aggregates_retention_idx").on(table.retainUntil),
+    check(
+      "phase1a_metric_aggregates_dimensions",
+      sql`json_valid(${table.dimensions}) AND json_type(${table.dimensions}) = 'object'`
+    ),
+    check(
+      "phase1a_metric_aggregates_window",
+      sql`${table.timeBucket} >= 0 AND ${table.timeBucket} % 3600000 = 0 AND ${table.retainUntil} = ${table.timeBucket} + 15552000000`
+    ),
+    check(
+      "phase1a_metric_aggregates_count",
+      sql`typeof(${table.count}) = 'integer' AND ${table.count} > 0`
+    )
+  ]
+);
+
+export const phase1aMetricsClock = sqliteTable(
+  "phase1a_metrics_clock",
+  {
+    id: integer("id").primaryKey(),
+    processedAt: integer("processed_at").notNull()
+  },
+  (table) => [
+    check("phase1a_metrics_clock_singleton", sql`${table.id} = 1 AND ${table.processedAt} >= 0`)
+  ]
+);
+
 export const capabilities = sqliteTable(
   "capabilities",
   {
@@ -168,12 +232,79 @@ export const capabilityReconciliationCandidates = sqliteTable(
   ]
 );
 
+export const abuseReports = sqliteTable(
+  "abuse_reports",
+  {
+    id: text("id").primaryKey(),
+    routingLocator: text("routing_locator").notNull(),
+    reason: text("reason").notNull(),
+    note: text("note"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    noteDeleteAt: integer("note_delete_at", { mode: "timestamp_ms" }).notNull(),
+    confirmedAt: integer("confirmed_at", { mode: "timestamp_ms" }),
+    retainUntil: integer("retain_until", { mode: "timestamp_ms" }).notNull(),
+    version: integer("version").notNull()
+  },
+  (table) => [
+    index("abuse_reports_retention_idx").on(table.retainUntil),
+    index("abuse_reports_note_cleanup_idx").on(table.noteDeleteAt),
+    index("abuse_reports_created_idx").on(table.createdAt, table.id),
+    check(
+      "abuse_reports_note_bytes",
+      sql`${table.note} is null or length(cast(${table.note} as blob)) <= 1024`
+    ),
+    check(
+      "abuse_reports_reason",
+      sql`${table.reason} in ('phishing','malware','harassment','spam','other')`
+    ),
+    check(
+      "abuse_reports_retention",
+      sql`${table.noteDeleteAt} = ${table.createdAt} + 2592000000 and ((${table.confirmedAt} is null and ${table.retainUntil} = ${table.createdAt} + 2592000000) or (${table.confirmedAt} >= ${table.createdAt} and ${table.retainUntil} = ${table.confirmedAt} + 15552000000))`
+    ),
+    check(
+      "abuse_reports_version",
+      sql`typeof(${table.version}) = 'integer' and ${table.version} > 0`
+    )
+  ]
+);
+
+export const adminAudit = sqliteTable(
+  "admin_audit",
+  {
+    id: text("id").primaryKey(),
+    routingLocator: text("routing_locator").notNull(),
+    actor: text("actor").notNull(),
+    action: text("action").notNull(),
+    reason: text("reason").notNull(),
+    reportId: text("report_id"),
+    occurredAt: integer("occurred_at", { mode: "timestamp_ms" }).notNull(),
+    retainUntil: integer("retain_until", { mode: "timestamp_ms" }).notNull()
+  },
+  (table) => [
+    index("admin_audit_retention_idx").on(table.retainUntil),
+    check(
+      "admin_audit_action",
+      sql`${table.action} in ('disable','abuse_lock','delete','release')`
+    ),
+    check(
+      "admin_audit_reason",
+      sql`${table.reason} in ('phishing','malware','harassment','spam','other')`
+    ),
+    check("admin_audit_retention", sql`${table.retainUntil} = ${table.occurredAt} + 15552000000`)
+  ]
+);
+
 export const schema = {
+  phase1aMetricReceipts,
+  phase1aMetricAggregates,
+  phase1aMetricsClock,
   capabilities,
   capabilityCounters,
   capabilityProjectionEvents,
   capabilityTerminalTombstones,
-  capabilityReconciliationCandidates
+  capabilityReconciliationCandidates,
+  abuseReports,
+  adminAudit
 };
 
 export type CapabilitySelect = typeof capabilities.$inferSelect;

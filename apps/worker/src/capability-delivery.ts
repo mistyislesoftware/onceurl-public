@@ -12,6 +12,13 @@ import {
   type ReconciliationCandidate
 } from "./capability-projection";
 import type { WorkerEnv } from "./env";
+import {
+  aggregateMetric,
+  metricEvent,
+  metricEventSchema,
+  metricLag,
+  sendMetric
+} from "./phase1a-metrics";
 
 const QUEUE_RETRY_DELAY_SECONDS = 60;
 
@@ -59,6 +66,18 @@ async function processQueueMessage(
   env: WorkerEnv,
   deadLetterDelivery: boolean
 ): Promise<void> {
+  const metric = metricEventSchema.safeParse(queueMessage.body);
+  if (metric.success) {
+    try {
+      await aggregateMetric(database, metric.data, Date.now());
+      queueMessage.ack();
+    } catch {
+      console.error("metrics_projection_failed", { category: "d1" });
+      if (deadLetterDelivery) queueMessage.ack();
+      else queueMessage.retry({ delaySeconds: QUEUE_RETRY_DELAY_SECONDS });
+    }
+    return;
+  }
   const message = parseCapabilityProjectionMessage(queueMessage.body);
   if (message === null || message.deliveryEventId === null) {
     console.warn("capability_queue_poison", {
@@ -84,6 +103,14 @@ async function processQueueMessage(
     }
 
     const now = Date.now();
+    await sendMetric(
+      env,
+      metricEvent(env.DEPLOYMENT_ENVIRONMENT, now, {
+        family: "cost",
+        category: "queue_delivery",
+        routeTemplate: "outbox"
+      })
+    );
     const projectionResult = await applyCapabilityProjection(database, message, now);
     await invokeCapabilityObject(env, message, "/internal/capability/projection-ack", {
       eventId: message.deliveryEventId,
@@ -94,6 +121,23 @@ async function processQueueMessage(
       await completeProjectionReconciliation(database, message, now);
     }
     queueMessage.ack();
+    await sendMetric(
+      env,
+      metricEvent(env.DEPLOYMENT_ENVIRONMENT, now, {
+        family: "delivery",
+        category: "projected",
+        routeTemplate: "outbox",
+        lagBucket: metricLag(now - message.event.occurredAt)
+      })
+    );
+    await sendMetric(
+      env,
+      metricEvent(env.DEPLOYMENT_ENVIRONMENT, now, {
+        family: "cost",
+        category: "d1_batch",
+        routeTemplate: "outbox"
+      })
+    );
   } catch {
     console.error("capability_queue_processing_failed", {
       category: "retryable",
@@ -134,6 +178,15 @@ async function reconcileCandidate(
       await markTerminalVerified(database, candidate.capabilityId, now);
     }
     await completeProjectionReconciliation(database, message, now);
+    await sendMetric(
+      env,
+      metricEvent(env.DEPLOYMENT_ENVIRONMENT, now, {
+        family: "delivery",
+        category: "reconciled",
+        routeTemplate: "reconciliation",
+        lagBucket: metricLag(now - message.event.occurredAt)
+      })
+    );
     console.info("capability_reconciliation_result", {
       category: candidate.terminalEvidence === null ? "verified" : "terminal_reapplied",
       pendingAgeBucket: ageBucket(now - message.event.occurredAt),
@@ -141,6 +194,15 @@ async function reconcileCandidate(
     });
   } catch {
     console.error("capability_reconciliation_result", { category: "retry_scheduled" });
+    await sendMetric(
+      env,
+      metricEvent(env.DEPLOYMENT_ENVIRONMENT, now, {
+        family: "delivery",
+        category: "platform_error",
+        routeTemplate: "reconciliation",
+        retryBucket: "retry"
+      })
+    );
     try {
       await deferReconciliationCandidate(database, candidate, now);
     } catch {
